@@ -1,0 +1,5 @@
+{
+  "AGENT_DOMAIN": "agent.groundmark-poc.example",
+  "IDSP_DOMAIN": "idsp.groundmark-poc.example",
+  "ISSUER_BASE_URL": "https://idsp.groundmark-poc.example"
+}

@@ -1,0 +1,5 @@
+"@method": POST
+"@authority": api.supplier.example
+"@target-uri": https://api.supplier.example/orders
+"content-digest": sha-256=:msyFuAhBbE3eHePKgRrRoBirkgt9V0eeo4o7sEtnxNQ=:
+"@signature-params": ("@method" "@authority" "@target-uri" "content-digest");created=1747654321;expires=1747654621;keyid="agent.groundmark-poc.example";alg="ed25519"

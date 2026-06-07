@@ -1,0 +1,4 @@
+# Private keys never leave this machine. Public key material (*.pub.b64url) IS committed.
+*.private*
+*.key
+*.pem

@@ -1,0 +1,12 @@
+# Strategic decks / documents — never belong in the shared repo
+*.pptx
+*.docx
+
+# OS noise
+.DS_Store
+
+# Private key material — defense-in-depth (poc/.gitignore and poc/keys/.gitignore
+# also cover these). Public key material (*.pub.b64url) IS committed.
+keys/*.private*
+*.pem
+*.key
