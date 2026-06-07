@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "subject": "agent.groundmark-poc.example",
+  "claim_type": "x-registry-example-canadian-presence",
+  "claim_value": {
+    "present": true,
+    "jurisdiction": "CA"
+  },
+  "level": 1,
+  "idsp": "idsp.groundmark-poc.example",
+  "issued_at": "2026-05-19T12:00:00Z",
+  "expires_at": "2026-12-01T00:00:00Z",
+  "jurisdiction": "CA",
+  "method_disclosure": {
+    "methods": [
+      "self-asserted-presence",
+      "postal-address-verified"
+    ],
+    "method_detail": "Canadian presence per registrant requirements. PLACEHOLDER methods/evidence; vocabulary deferred to the Groundmark Method Identifier registry.",
+    "evidence_class": [
+      "postal-address"
+    ]
+  },
+  "endpoint_url": "https://idsp.groundmark-poc.example/a/sJQ7EFtRLmur1mHYMmd1Aw",
+  "revocation_endpoint": "https://idsp.groundmark-poc.example/r/sJQ7EFtRLmur1mHYMmd1Aw",
+  "signing_key_id": "k1",
+  "signature": "v94NRQjasbF3dyD5uhU_y_lSoszs6V_Ez3qccFvLK8TYP-0tgD7RGKG0DP9sOANYoGHm1VIkM0Z7q2EVc2b5Cg"
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "subject": "agent.groundmark-poc.example",
+  "claim_type": "operator-verified",
+  "claim_value": {
+    "verified": true,
+    "operator_display_name": "Groundmark PoC Operator"
+  },
+  "level": 1,
+  "idsp": "idsp.groundmark-poc.example",
+  "issued_at": "2026-05-19T12:00:00Z",
+  "expires_at": "2026-12-01T00:00:00Z",
+  "method_disclosure": {
+    "methods": [
+      "corporate-registry-lookup",
+      "organizational-domain-email-confirmation"
+    ],
+    "method_detail": "Operator legal entity confirmed against a corporate registry; domain control confirmed by email challenge to postmaster@agent.groundmark-poc.example.",
+    "evidence_class": [
+      "corporate-registry",
+      "domain-control"
+    ]
+  },
+  "endpoint_url": "https://idsp.groundmark-poc.example/a/vr7Z_bv-gKX0q0cz3wFgug",
+  "revocation_endpoint": "https://idsp.groundmark-poc.example/r/vr7Z_bv-gKX0q0cz3wFgug",
+  "signing_key_id": "k1",
+  "signature": "k-IS3AaVH5T8urGQ4BvhyhsBTTl69eISACu9R6WwgKYEoP9BO7rWkltw0WZQFkzlm7xa9s6_mFiQ3mSSNUjkDw"
+}

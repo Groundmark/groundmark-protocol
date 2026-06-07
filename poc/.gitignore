@@ -1,0 +1,9 @@
+# Never commit private key material.
+keys/*.private*
+*.key
+*.pem
+
+# Local noise
+.DS_Store
+__pycache__/
+*.pyc

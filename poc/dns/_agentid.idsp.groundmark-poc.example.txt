@@ -1,0 +1,1 @@
+_agentid.idsp.groundmark-poc.example. 300 IN TXT "v=gm1; k=ed25519; kid=k1; p=JtwMfz3wkEZ5KjJJmO0W9SVkdtlNfnPjqz5lfDDczlc"
