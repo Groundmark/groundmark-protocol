@@ -9,6 +9,7 @@
 import type { KeyObject } from "node:crypto";
 import type { DnssecResolver } from "../dns/resolver.ts";
 import { isSecure } from "../dns/resolver.ts";
+import { parseAgentIdRecord, assertMultiRecordValidity, type AgentIdRecord } from "../dns/agentidRecord.ts";
 import { ed25519PublicKeyFromBase64url } from "../crypto/ed25519.ts";
 import { VerificationError } from "../errors.ts";
 
@@ -31,44 +32,6 @@ export function parseKeyId(keyid: string): ParsedKeyId {
     throw new VerificationError("agentid_malformed", "malformed keyid");
   }
   return { domain, kid };
-}
-
-interface AgentIdRecord {
-  alg: string;
-  publicKeyB64url: string;
-  kid?: string;
-}
-
-const KID_RE = /^[A-Za-z0-9._-]+$/;
-
-/** Parse one `_agentid` record value per the core ABNF (§4.1.1/§4.1.2). */
-function parseAgentIdRecord(value: string): AgentIdRecord {
-  const parts = value.split(";").map((p) => p.trim());
-  if (parts[0] !== "v=gm1") {
-    throw new VerificationError("agentid_malformed", "version tag v=gm1 must appear first");
-  }
-  let alg: string | undefined;
-  let p: string | undefined;
-  let kid: string | undefined;
-  for (const part of parts.slice(1)) {
-    if (part === "") throw new VerificationError("agentid_malformed", "empty parameter");
-    const eq = part.indexOf("=");
-    if (eq < 0) throw new VerificationError("agentid_malformed", "parameter without value");
-    const key = part.slice(0, eq);
-    const val = part.slice(eq + 1);
-    if (key === "k") alg = val;
-    else if (key === "p") p = val;
-    else if (key === "kid") {
-      if (!KID_RE.test(val)) throw new VerificationError("agentid_malformed", "invalid kid");
-      kid = val;
-    }
-    // unknown ext-params are tolerated (forward compatibility)
-  }
-  if (alg === undefined) throw new VerificationError("agentid_malformed", "k= is required");
-  if (p === undefined) throw new VerificationError("agentid_malformed", "p= is required");
-  const rec: AgentIdRecord = { alg, publicKeyB64url: p };
-  if (kid !== undefined) rec.kid = kid;
-  return rec;
 }
 
 export interface ResolvedAgentKey {
@@ -105,26 +68,7 @@ export async function resolveAgentKey(
   }
 
   const records = res.records.map(parseAgentIdRecord);
-
-  // Multi-record validity rules (§4.1.2).
-  if (records.length > 1) {
-    if (records.some((r) => r.kid === undefined)) {
-      throw new VerificationError(
-        "agentid_missing_kid",
-        "multiple _agentid records present and at least one lacks kid=",
-      );
-    }
-    const kids = new Set<string>();
-    for (const r of records) {
-      if (kids.has(r.kid!)) {
-        throw new VerificationError(
-          "agentid_duplicate_kid",
-          "multiple _agentid records share a kid=",
-        );
-      }
-      kids.add(r.kid!);
-    }
-  }
+  assertMultiRecordValidity(records); // §4.1.2
 
   // Key selection (§5.2).
   let selected: AgentIdRecord;
