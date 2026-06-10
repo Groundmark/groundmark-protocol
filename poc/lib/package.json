@@ -14,5 +14,8 @@
   "license": "SEE LICENSE IN repo root",
   "devDependencies": {
     "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "canonicalize": "^2.1.0"
   }
 }

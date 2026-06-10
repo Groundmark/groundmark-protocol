@@ -38,7 +38,22 @@ export type VerifyFailureReason =
   | "keyid_no_match"
   | "alg_mismatch"
   // --- signature (C4) ---
-  | "signature_invalid";
+  | "signature_invalid"
+  // --- attestation layer (C5–C9) ---
+  | "attestation_malformed"
+  | "unknown_schema_version"
+  | "wrong_subject"
+  | "endpoint_mismatch"
+  | "attestation_expired"
+  | "claim_exp_passed"
+  | "below_policy_level"
+  | "idsp_dnssec_validation_failed"
+  | "idsp_key_unresolved"
+  | "signing_key_id_no_match"
+  | "attestation_signature_invalid"
+  | "attestation_fetch_failed"
+  | "claim_revoked"
+  | "revocation_unavailable_fail_closed";
 
 /** Internal control-flow error. Top-level verifiers convert this to a verdict. */
 export class VerificationError extends Error {
