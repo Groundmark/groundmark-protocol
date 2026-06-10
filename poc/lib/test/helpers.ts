@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
 
 import { MockDnssecResolver } from "../src/dns/mockResolver.ts";
+import { MockHttpsFetcher } from "../src/attestation/fetcher.ts";
 import type { HttpRequestMessage } from "../src/rfc9421/message.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -148,3 +149,21 @@ export function resolverForKey(agentDomain: string, publicKeyB64url: string, kid
 }
 
 export type { KeyObject };
+
+/**
+ * A MockHttpsFetcher serving the good attestations at their endpoint_url and a
+ * {"revoked": false} response at each revocation_endpoint — the world the good
+ * end-to-end case verifies against.
+ */
+export function fixtureFetcher(): MockHttpsFetcher {
+  const f = new MockHttpsFetcher();
+  for (const name of ["operator-verified", "x-registry-example-canadian-presence"]) {
+    const att = JSON.parse(readPocText("fixtures", "good", `${name}.json`)) as {
+      endpoint_url: string;
+      revocation_endpoint: string;
+    };
+    f.setRaw(att.endpoint_url, readPoc("fixtures", "good", `${name}.json`), { contentType: "application/json" });
+    f.setJson(att.revocation_endpoint, { revoked: false });
+  }
+  return f;
+}

@@ -25,18 +25,28 @@ attestation canonicalization; each dependency is justified in the PR.
 | # | Component | Status | Source |
 |---|-----------|--------|--------|
 | 1 | RFC 9421 parser + signature base | ✅ | `src/rfc9421/{parse,message,signatureBase,contentDigest}.ts` |
-| 2 | DNSSEC-validating resolver | ⏸ **interface + mock only** — concrete validating client pending the resolver-approach decision (instruction §2) and a real demo domain | `src/dns/{resolver,mockResolver}.ts` |
+| 2 | DNSSEC-validating resolver | ⏸ **interface + mock**; concrete local-AD client gated on a real demo domain (decision recorded in `docs/dnssec-resolver.md`) | `src/dns/{resolver,mockResolver,agentidRecord}.ts` |
 | 3 | Agent key resolver | ✅ | `src/agent/keyResolver.ts` |
 | 4 | Request-signature verifier | ✅ | `src/verifyRequest.ts` |
-| 5 | Claim resolver | ⬜ not started | — |
-| 6 | Attestation validator | ⬜ not started | — |
-| 7 | IDSP key resolver + attestation-signature verifier | ⬜ not started | — |
-| 8 | Revocation + caching engine | ⬜ not started | — |
-| 9 | Policy + verdict layer | ⬜ not started | — |
+| 5 | Claim resolver | ✅ | `src/claim/{parseAgentClaim,resolveClaims}.ts` |
+| 6 | Attestation validator | ✅ | `src/attestation/{payload,canonical,verify}.ts` |
+| 7 | IDSP key resolver + attestation-signature verifier | ✅ | `src/idsp/idspKeyResolver.ts`, `src/attestation/verify.ts` |
+| 8 | Revocation + caching engine | ✅ | `src/revocation/revocation.ts`, `src/cache/ttl.ts` |
+| 9 | Policy + verdict layer | ✅ | `src/attestation/evaluate.ts`, `src/verify.ts` |
 
 Components 1–4 are the self-standing **Level 0** core: they establish that a
 request came from a party controlling the agent domain's DNSSEC-protected key,
-and nothing more.
+and nothing more. Components 5–9 add the optional attestation layer; the
+top-level `verifyAgentRequest` ties them together under a relying-party policy.
+
+## Dependencies
+
+- `canonicalize` — RFC 8785 (JCS) canonicalization for attestation signatures.
+  Required because §5 forbids hand-rolling canonicalization; the generator's
+  `sort_keys` shortcut is only valid for ASCII-keyed, float-free payloads.
+
+Ed25519, SHA-256, and HTTP come from `node:crypto` / the platform — no other
+runtime dependencies.
 
 ## The resolver seam
 

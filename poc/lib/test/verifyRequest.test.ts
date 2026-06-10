@@ -45,7 +45,7 @@ test("tampered signature byte -> signature_invalid", async () => {
   const sigHeader = message.headers.get("signature")![0]!;
   const inner = sigHeader.slice("gm=:".length, -1);
   const bytes = Buffer.from(inner, "base64");
-  bytes[0] ^= 0x01;
+  bytes[0] = bytes[0]! ^ 0x01;
   message.headers.set("signature", [`gm=:${bytes.toString("base64")}:`]);
   const v = await verifyRequestMessage(message, resolverForKey(AGENT, publicKeyB64url), { now: 1000 });
   assertFail(v, "signature_invalid");

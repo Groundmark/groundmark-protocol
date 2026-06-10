@@ -7,7 +7,12 @@
  * library must be correct in general.
  */
 
-import canonicalize from "canonicalize";
+import canonicalizeImport from "canonicalize";
+
+// `canonicalize` is a CJS module typed with `export default`; under NodeNext the
+// default import resolves to the function at runtime, but its static type is the
+// module namespace (not callable). Cast once to its true call signature.
+const canonicalize = canonicalizeImport as unknown as (input: unknown) => string | undefined;
 
 /**
  * Canonicalize `obj` per RFC 8785 and return the UTF-8 bytes. The attestation

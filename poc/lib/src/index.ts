@@ -6,6 +6,10 @@
  * The attestation layer (components 5–9) builds on this and is added later.
  */
 
+// Top-level entry point — Level 0 request + optional attestation policy
+export { verifyAgentRequest } from "./verify.ts";
+export type { VerifyAgentRequestOptions, GroundmarkVerdict } from "./verify.ts";
+
 // Component 4 — request verification entry points
 export { verifyRequest, verifyRequestMessage } from "./verifyRequest.ts";
 export type {
@@ -30,6 +34,35 @@ export { MockDnssecResolver } from "./dns/mockResolver.ts";
 // Component 3 — agent key resolution
 export { resolveAgentKey, parseKeyId } from "./agent/keyResolver.ts";
 export type { ResolvedAgentKey, ParsedKeyId } from "./agent/keyResolver.ts";
+
+// Components 5–9 — attestation layer
+export { resolveClaims } from "./claim/resolveClaims.ts";
+export { parseAgentClaim } from "./claim/parseAgentClaim.ts";
+export type { ClaimRecord, RefClaimRecord, ValClaimRecord } from "./claim/parseAgentClaim.ts";
+export { parseAttestation } from "./attestation/payload.ts";
+export type { AttestationPayload, MethodDisclosure } from "./attestation/payload.ts";
+export { verifyAttestation } from "./attestation/verify.ts";
+export type { AttestationVerifyContext } from "./attestation/verify.ts";
+export { resolveIdspKey } from "./idsp/idspKeyResolver.ts";
+export { checkRevocation } from "./revocation/revocation.ts";
+export type {
+  RevocationPolicy,
+  AuditLogger,
+  FailOpenAuditEntry,
+} from "./revocation/revocation.ts";
+export { computeCacheTtl, TtlCache } from "./cache/ttl.ts";
+export { evaluateAttestations } from "./attestation/evaluate.ts";
+export type {
+  AttestationPolicy,
+  AttestationVerdict,
+  ClaimVerdict,
+  EvaluateOptions,
+} from "./attestation/evaluate.ts";
+export {
+  MockHttpsFetcher,
+  FetchUnavailable,
+} from "./attestation/fetcher.ts";
+export type { HttpsFetcher, FetchedResource } from "./attestation/fetcher.ts";
 
 // Component 1 — RFC 9421 building blocks (exposed for advanced callers/tests)
 export { parseSignatureInput, parseSignature } from "./rfc9421/parse.ts";
