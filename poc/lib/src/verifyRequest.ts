@@ -1,0 +1,244 @@
+/**
+ * Component 4 — Request-signature verifier (Level 0 core).
+ *
+ * Implements the verification steps of core draft §5.5 in order:
+ *   1. parse Signature-Input / Signature; confirm required components & params
+ *   2. freshness: |created - now| <= 300s; expires (if present) in the future
+ *   3. resolve the agent key via DNSSEC (keyid -> _agentid)
+ *   4. verify Content-Digest against the body (bodied requests)
+ *   5. reconstruct the signature base
+ *   6. verify the Ed25519 signature
+ *
+ * Output of C1–C4 is a self-standing Level 0 verifier: it establishes that a
+ * request came from a party controlling the DNSSEC-protected agent domain's key,
+ * and nothing more.
+ */
+
+import type { DnssecResolver } from "./dns/resolver.ts";
+import type { HttpRequestMessage } from "./rfc9421/message.ts";
+import { parseHttpRequest } from "./rfc9421/message.ts";
+import {
+  parseSignatureInput,
+  parseSignature,
+  paramString,
+  paramInteger,
+  type SignatureInputEntry,
+} from "./rfc9421/parse.ts";
+import { buildSignatureBase } from "./rfc9421/signatureBase.ts";
+import { verifyContentDigest } from "./rfc9421/contentDigest.ts";
+import { resolveAgentKey, parseKeyId } from "./agent/keyResolver.ts";
+import { verifyEd25519 } from "./crypto/ed25519.ts";
+import { VerificationError, type VerifyFailureReason } from "./errors.ts";
+
+/** Replay-protection store for nonces (relying-party state, core §5.4). */
+export interface NonceStore {
+  has(nonce: string): boolean;
+  add(nonce: string): void;
+}
+
+export interface VerifyRequestOptions {
+  /** Current time as UNIX seconds. Injected so the suite can pin to signing time. */
+  now: number;
+  /** Max allowed |created - now| skew, seconds (default 300, per §5.4). */
+  maxClockSkewSeconds?: number;
+  /** Which signature label to verify. Defaults to the sole label present. */
+  label?: string;
+  /** Require a nonce parameter and enforce replay protection (§5.4, high-risk). */
+  requireNonce?: boolean;
+  /** Nonce store; required when requireNonce is set. */
+  nonceStore?: NonceStore;
+  /** Scheme for @target-uri when parsing a raw HTTP request (default "https"). */
+  scheme?: string;
+}
+
+export interface RequestVerdictOk {
+  ok: true;
+  agentDomain: string;
+  keyid: string;
+  kid?: string;
+  created: number;
+  expires?: number;
+  /** DNS TTL (seconds) of the _agentid answer — the cache ceiling for this key. */
+  ttl: number;
+}
+
+export interface RequestVerdictFail {
+  ok: false;
+  reason: VerifyFailureReason;
+  message: string;
+}
+
+export type RequestVerdict = RequestVerdictOk | RequestVerdictFail;
+
+const REQUIRED_DERIVED = ["@method", "@authority", "@target-uri"] as const;
+
+/** Verify a parsed HTTP request message. */
+export async function verifyRequestMessage(
+  msg: HttpRequestMessage,
+  resolver: DnssecResolver,
+  opts: VerifyRequestOptions,
+): Promise<RequestVerdict> {
+  try {
+    const verdict = await run(msg, resolver, opts);
+    return verdict;
+  } catch (e) {
+    if (e instanceof VerificationError) {
+      return { ok: false, reason: e.reason, message: e.message };
+    }
+    throw e;
+  }
+}
+
+/** Verify a raw HTTP/1.1 request (Buffer). */
+export async function verifyRequest(
+  raw: Buffer,
+  resolver: DnssecResolver,
+  opts: VerifyRequestOptions,
+): Promise<RequestVerdict> {
+  let msg: HttpRequestMessage;
+  try {
+    msg = parseHttpRequest(raw, opts.scheme !== undefined ? { scheme: opts.scheme } : {});
+  } catch (e) {
+    return { ok: false, reason: "sig_input_malformed", message: `malformed HTTP request: ${(e as Error).message}` };
+  }
+  return verifyRequestMessage(msg, resolver, opts);
+}
+
+async function run(
+  msg: HttpRequestMessage,
+  resolver: DnssecResolver,
+  opts: VerifyRequestOptions,
+): Promise<RequestVerdict> {
+  const skew = opts.maxClockSkewSeconds ?? 300;
+
+  // --- Step 1: parse and confirm structure (§5.5.1) ---
+  const sigInputRaw = firstHeader(msg, "signature-input");
+  if (sigInputRaw === undefined) {
+    throw new VerificationError("sig_input_missing", "no Signature-Input header");
+  }
+  const sigRaw = firstHeader(msg, "signature");
+  if (sigRaw === undefined) {
+    throw new VerificationError("sig_missing", "no Signature header");
+  }
+
+  const { entries } = parseSignatureInput(sigInputRaw);
+  const { signatures } = parseSignature(sigRaw);
+
+  const label = selectLabel(entries, opts.label);
+  const entry = entries.get(label)!;
+  const signature = signatures.get(label);
+  if (signature === undefined) {
+    throw new VerificationError("label_mismatch", `Signature has no member for label "${label}"`);
+  }
+
+  const covered = new Set(entry.components.map((c) => c.name));
+  for (const required of REQUIRED_DERIVED) {
+    if (!covered.has(required)) {
+      throw new VerificationError("missing_covered_component", `signature must cover ${required}`);
+    }
+  }
+  const hasBody = msg.body !== undefined && msg.body.length > 0;
+  if (hasBody && !covered.has("content-digest")) {
+    throw new VerificationError("missing_covered_component", "bodied request must cover content-digest");
+  }
+
+  const created = paramInteger(entry.params, "created");
+  if (created === undefined) {
+    throw new VerificationError("missing_signature_param", "created parameter is required");
+  }
+  const keyidStr = paramString(entry.params, "keyid");
+  if (keyidStr === undefined) {
+    throw new VerificationError("missing_signature_param", "keyid parameter is required");
+  }
+  const algParam = paramString(entry.params, "alg");
+  if (algParam === undefined) {
+    throw new VerificationError("missing_signature_param", "alg parameter is required");
+  }
+  const expires = paramInteger(entry.params, "expires");
+
+  // --- Step 2: freshness / replay (§5.5.2, §5.4) ---
+  if (Math.abs(created - opts.now) > skew) {
+    throw new VerificationError(
+      "created_out_of_window",
+      `created (${created}) is more than ${skew}s from now (${opts.now})`,
+    );
+  }
+  if (expires !== undefined && expires <= opts.now) {
+    throw new VerificationError("expires_in_past", `expires (${expires}) is not in the future`);
+  }
+  if (opts.requireNonce) {
+    const nonce = paramString(entry.params, "nonce");
+    if (nonce === undefined) {
+      throw new VerificationError("nonce_missing", "nonce parameter is required by policy");
+    }
+    if (!opts.nonceStore) {
+      throw new Error("requireNonce set but no nonceStore provided");
+    }
+    if (opts.nonceStore.has(nonce)) {
+      throw new VerificationError("nonce_replayed", "nonce has already been observed");
+    }
+    opts.nonceStore.add(nonce);
+  }
+
+  // --- Step 3: resolve the agent key via DNSSEC (§5.5.3) ---
+  const keyid = parseKeyId(keyidStr);
+  const resolved = await resolveAgentKey(resolver, keyid);
+  if (algParam !== resolved.alg) {
+    throw new VerificationError(
+      "alg_mismatch",
+      `signature alg (${algParam}) does not match key algorithm (${resolved.alg})`,
+    );
+  }
+
+  // --- Step 4: Content-Digest on bodied requests (§5.5.4, §5.3) ---
+  if (hasBody) {
+    const cd = firstHeader(msg, "content-digest");
+    if (cd === undefined) {
+      throw new VerificationError("content_digest_missing", "bodied request lacks Content-Digest");
+    }
+    verifyContentDigest(cd, msg.body!);
+  }
+
+  // --- Step 5: reconstruct the signature base (§5.5.5) ---
+  const base = buildSignatureBase(entry, msg);
+
+  // --- Step 6: verify the signature (§5.5.6) ---
+  if (!verifyEd25519(resolved.publicKey, Buffer.from(base, "utf8"), signature)) {
+    throw new VerificationError("signature_invalid", "Ed25519 signature verification failed");
+  }
+
+  const out: RequestVerdictOk = {
+    ok: true,
+    agentDomain: resolved.domain,
+    keyid: keyidStr,
+    created,
+    ttl: resolved.ttl,
+  };
+  if (resolved.kid !== undefined) out.kid = resolved.kid;
+  if (expires !== undefined) out.expires = expires;
+  return out;
+}
+
+function firstHeader(msg: HttpRequestMessage, name: string): string | undefined {
+  const v = msg.headers.get(name);
+  return v && v.length > 0 ? v[0] : undefined;
+}
+
+function selectLabel(
+  entries: Map<string, SignatureInputEntry>,
+  requested: string | undefined,
+): string {
+  if (requested !== undefined) {
+    if (!entries.has(requested)) {
+      throw new VerificationError("label_mismatch", `no Signature-Input member for label "${requested}"`);
+    }
+    return requested;
+  }
+  if (entries.size !== 1) {
+    throw new VerificationError(
+      "sig_input_malformed",
+      "multiple signatures present; specify which label to verify",
+    );
+  }
+  return [...entries.keys()][0]!;
+}

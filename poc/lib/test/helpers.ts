@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
 
 import { MockDnssecResolver } from "../src/dns/mockResolver.ts";
+import type { HttpRequestMessage } from "../src/rfc9421/message.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** poc/ root (test/ is under poc/lib/test). */
@@ -68,3 +70,81 @@ export function fixtureResolver(): MockDnssecResolver {
   for (const [name, entry] of byName) r.setSecure(name, entry);
   return r;
 }
+
+// --- ephemeral signing, for parametric request-verifier tests --------------
+// Private key material is generated at test time and never persisted (§7).
+
+export interface SignRequestSpec {
+  agentDomain: string;
+  kid?: string;
+  created: number;
+  expires?: number;
+  nonce?: string;
+  method?: string;
+  url?: string;
+  authority?: string;
+  body?: Buffer;
+}
+
+export interface SignedRequest {
+  message: HttpRequestMessage;
+  publicKeyB64url: string;
+}
+
+/** Build a validly signed HttpRequestMessage with a freshly generated key. */
+export function signRequest(spec: SignRequestSpec): SignedRequest {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const x = (publicKey.export({ format: "jwk" }) as { x: string }).x;
+
+  const method = spec.method ?? "POST";
+  const authority = (spec.authority ?? "api.supplier.example").toLowerCase();
+  const url = spec.url ?? `https://${authority}/orders`;
+  const body = spec.body;
+
+  const headers = new Map<string, string[]>();
+  headers.set("host", [authority]);
+
+  const components: string[] = ['"@method"', '"@authority"', '"@target-uri"'];
+  const baseLines: string[] = [
+    `"@method": ${method.toUpperCase()}`,
+    `"@authority": ${authority}`,
+    `"@target-uri": ${url}`,
+  ];
+
+  if (body && body.length > 0) {
+    const digest = createHash("sha256").update(body).digest().toString("base64");
+    const cd = `sha-256=:${digest}:`;
+    headers.set("content-type", ["application/json"]);
+    headers.set("content-digest", [cd]);
+    components.push('"content-digest"');
+    baseLines.push(`"content-digest": ${cd}`);
+  }
+
+  const keyid = spec.kid ? `${spec.agentDomain}#${spec.kid}` : spec.agentDomain;
+  let params = `${components.join(" ")});created=${spec.created}`;
+  params = `(${params}`;
+  if (spec.expires !== undefined) params += `;expires=${spec.expires}`;
+  params += `;keyid="${keyid}";alg="ed25519"`;
+  if (spec.nonce !== undefined) params += `;nonce="${spec.nonce}"`;
+
+  baseLines.push(`"@signature-params": ${params}`);
+  const base = baseLines.join("\n");
+  const sig = cryptoSign(null, Buffer.from(base, "utf8"), privateKey).toString("base64");
+
+  headers.set("signature-input", [`gm=${params}`]);
+  headers.set("signature", [`gm=:${sig}:`]);
+
+  const message: HttpRequestMessage = { method, url, authority, headers };
+  if (body && body.length > 0) message.body = body;
+  return { message, publicKeyB64url: x };
+}
+
+/** A MockDnssecResolver publishing a single agent key (optionally with a kid). */
+export function resolverForKey(agentDomain: string, publicKeyB64url: string, kid?: string): MockDnssecResolver {
+  const rec = kid
+    ? `v=gm1; k=ed25519; kid=${kid}; p=${publicKeyB64url}`
+    : `v=gm1; k=ed25519; p=${publicKeyB64url}`;
+  return new MockDnssecResolver().setSecure(`_agentid.${agentDomain}`, { records: [rec] });
+}
+
+export type { KeyObject };
