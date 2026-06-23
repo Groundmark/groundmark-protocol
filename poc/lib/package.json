@@ -1,0 +1,22 @@
+{
+  "name": "@groundmark/verifier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Groundmark relying-party verification library (PoC #1). Implements the core draft Level 0 request authentication and (incrementally) the companion attestation framework.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "SEE LICENSE IN repo root",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "canonicalize": "^2.1.0"
+  }
+}
