@@ -19,6 +19,7 @@ import {
   evaluateAttestations,
   type AttestationPolicy,
   type AttestationVerdict,
+  type EvaluateOptions,
 } from "./attestation/evaluate.ts";
 
 export interface VerifyAgentRequestOptions extends VerifyRequestOptions {
@@ -55,6 +56,7 @@ export async function verifyAgentRequest(
   if (opts.requireNonce !== undefined) reqOpts.requireNonce = opts.requireNonce;
   if (opts.nonceStore !== undefined) reqOpts.nonceStore = opts.nonceStore;
   if (opts.scheme !== undefined) reqOpts.scheme = opts.scheme;
+  if (opts.requireGroundmarkClaim !== undefined) reqOpts.requireGroundmarkClaim = opts.requireGroundmarkClaim;
 
   const request = await verifyRequest(raw, opts.resolver, reqOpts);
   if (!request.ok) return { ok: false, request };
@@ -67,14 +69,19 @@ export async function verifyAgentRequest(
     throw new Error("attestation policy requires both a fetcher and a logger");
   }
 
-  const attestations = await evaluateAttestations(request.agentDomain, {
+  const evalOpts: EvaluateOptions = {
     resolver: opts.resolver,
     fetcher: opts.fetcher,
     now: opts.now,
     policy: opts.policy,
     logger: opts.logger,
     transactionId: opts.transactionId ?? "unspecified",
-  });
+  };
+  // Bind the signature-covered Groundmark-Claim (if presented) to the DNS-
+  // authoritative claim set and the fetched attestation (binding steps 3–4).
+  if (request.groundmarkClaim !== undefined) evalOpts.presentedClaim = request.groundmarkClaim;
+
+  const attestations = await evaluateAttestations(request.agentDomain, evalOpts);
 
   return { ok: attestations.policySatisfied, request, attestations };
 }

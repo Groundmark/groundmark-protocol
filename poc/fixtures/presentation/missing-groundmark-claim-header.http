@@ -1,0 +1,8 @@
+POST /present HTTP/1.1
+Host: api.relying-party.example
+Content-Type: application/json
+Content-Digest: sha-256=:y7E9P8S0gAZvUm6uwJ87IoxHP6kmhAKyHsDpJ4cE8wQ=:
+Signature-Input: gm=("@method" "@authority" "@target-uri" "content-digest" "groundmark-claim");created=1747654321;expires=1747654621;nonce="f3a9c21e-4b07-4d8a-b1e2-9c3f0a7e5d12";keyid="agent.groundmark-poc.example";alg="ed25519"
+Signature: gm=:ICMkKt9JEUrMalAhixU6GSVUBVoRmZaVpNqYMzJwiCFZpjWB6bU5EWeBwHb++YNbSDclv7uNvZUv6R8zKCj+Cw==:
+
+{"action":"present-credential"}

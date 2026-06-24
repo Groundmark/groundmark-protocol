@@ -17,6 +17,7 @@ import { resolveClaims } from "../claim/resolveClaims.ts";
 import { parseAttestation, type MethodDisclosure } from "./payload.ts";
 import { verifyAttestation } from "./verify.ts";
 import { checkRevocation, type AuditLogger, type RevocationPolicy } from "../revocation/revocation.ts";
+import type { PresentedClaim } from "../presentation/groundmarkClaim.ts";
 import { VerificationError, type VerifyFailureReason } from "../errors.ts";
 
 export interface AttestationPolicy {
@@ -36,6 +37,12 @@ export interface EvaluateOptions {
   logger: AuditLogger;
   /** Identifies the operation for fail-open audit logging (§8.2). */
   transactionId: string;
+  /**
+   * The `Groundmark-Claim` the holder presented (from the signature-bound header).
+   * When set, the binding is verified against the DNS-authoritative claim set and
+   * the fetched attestation (steps 3–4 of the presentation binding).
+   */
+  presentedClaim?: PresentedClaim;
 }
 
 export interface ClaimVerdict {
@@ -53,13 +60,25 @@ export interface ClaimVerdict {
   detail?: string;
 }
 
+/** Result of the Groundmark-Claim presentation binding (steps 3–4). */
+export interface ClaimBindingVerdict {
+  ok: boolean;
+  /** The presented claim_type (safe to surface; never includes the ref URL). */
+  claimType: string;
+  reason?: VerifyFailureReason;
+  detail?: string;
+}
+
 export interface AttestationVerdict {
   agentDomain: string;
   claims: ClaimVerdict[];
-  /** All requiredClaimTypes present and verified at/above the floor. */
+  /** All requiredClaimTypes present and verified at/above the floor AND, when a
+   *  claim was presented, the presentation binding holds. */
   policySatisfied: boolean;
   /** Required claim types not satisfied (empty when policy is satisfied). */
   missingClaims: string[];
+  /** Present only when a Groundmark-Claim was presented (presentation profile). */
+  binding?: ClaimBindingVerdict;
 }
 
 export async function evaluateAttestations(
@@ -68,6 +87,9 @@ export async function evaluateAttestations(
 ): Promise<AttestationVerdict> {
   const records = await resolveClaims(opts.resolver, agentDomain);
   const claims: ClaimVerdict[] = [];
+  // claim_type -> endpoint_url of the verified attestation (internal only — the
+  // endpoint URL is confidential and never surfaced on the verdict, §7).
+  const verifiedEndpoint = new Map<string, string>();
 
   for (const record of records) {
     if (record.kind === "val") {
@@ -85,7 +107,11 @@ export async function evaluateAttestations(
       }
     }
 
-    claims.push(await evaluateRefClaim(record.claimType, record.ref, record.idsp, agentDomain, opts));
+    const { verdict, endpointUrl } = await evaluateRefClaim(
+      record.claimType, record.ref, record.idsp, agentDomain, opts,
+    );
+    claims.push(verdict);
+    if (endpointUrl !== undefined) verifiedEndpoint.set(record.claimType, endpointUrl);
   }
 
   const missingClaims: string[] = [];
@@ -96,7 +122,57 @@ export async function evaluateAttestations(
     if (!ok) missingClaims.push(required);
   }
 
-  return { agentDomain, claims, policySatisfied: missingClaims.length === 0, missingClaims };
+  // Presentation binding (steps 3–4): only when the holder presented a claim.
+  const binding = opts.presentedClaim
+    ? computeBinding(opts.presentedClaim, records, verifiedEndpoint)
+    : undefined;
+
+  const verdict: AttestationVerdict = {
+    agentDomain,
+    claims,
+    policySatisfied: missingClaims.length === 0 && (binding?.ok ?? true),
+    missingClaims,
+  };
+  if (binding !== undefined) verdict.binding = binding;
+  return verdict;
+}
+
+/**
+ * Groundmark-Claim binding steps 3–4: the presented claim_type must be published
+ * in DNS, and the presented ref must equal the verified attestation's endpoint_url.
+ * Detail strings reference claim_type only — never the ref URL (§7).
+ */
+function computeBinding(
+  presented: PresentedClaim,
+  records: Awaited<ReturnType<typeof resolveClaims>>,
+  verifiedEndpoint: Map<string, string>,
+): ClaimBindingVerdict {
+  if (!records.some((r) => r.claimType === presented.claimType)) {
+    return {
+      ok: false,
+      claimType: presented.claimType,
+      reason: "groundmark_claim_dns_mismatch",
+      detail: "presented claim_type is not published in any _agentclaim record",
+    };
+  }
+  const endpointUrl = verifiedEndpoint.get(presented.claimType);
+  if (endpointUrl === undefined) {
+    return {
+      ok: false,
+      claimType: presented.claimType,
+      reason: "groundmark_claim_ref_mismatch",
+      detail: "no verified attestation for the presented claim_type to bind the ref against",
+    };
+  }
+  if (endpointUrl !== presented.ref) {
+    return {
+      ok: false,
+      claimType: presented.claimType,
+      reason: "groundmark_claim_ref_mismatch",
+      detail: "presented ref does not match the attestation endpoint_url",
+    };
+  }
+  return { ok: true, claimType: presented.claimType };
 }
 
 async function evaluateRefClaim(
@@ -105,18 +181,18 @@ async function evaluateRefClaim(
   idsp: string,
   agentDomain: string,
   opts: EvaluateOptions,
-): Promise<ClaimVerdict> {
+): Promise<{ verdict: ClaimVerdict; endpointUrl?: string }> {
   // Fetch the attestation. Errors reference the claim type, never the URL (§7).
   let body: Buffer;
   try {
     const res = await opts.fetcher.get(ref);
     if (res.status < 200 || res.status >= 300) {
-      return { claimType, ok: false, reason: "attestation_fetch_failed", detail: `HTTP ${res.status}` };
+      return { verdict: { claimType, ok: false, reason: "attestation_fetch_failed", detail: `HTTP ${res.status}` } };
     }
     body = res.body;
   } catch (e) {
     if (e instanceof FetchUnavailable) {
-      return { claimType, ok: false, reason: "attestation_fetch_failed", detail: "endpoint unreachable" };
+      return { verdict: { claimType, ok: false, reason: "attestation_fetch_failed", detail: "endpoint unreachable" } };
     }
     throw e;
   }
@@ -134,7 +210,7 @@ async function evaluateRefClaim(
     });
   } catch (e) {
     if (e instanceof VerificationError) {
-      return { claimType, ok: false, reason: e.reason, detail: e.message };
+      return { verdict: { claimType, ok: false, reason: e.reason, detail: e.message } };
     }
     throw e;
   }
@@ -161,16 +237,21 @@ async function evaluateRefClaim(
       transactionId: opts.transactionId,
     });
     return {
-      claimType,
-      ok: true,
-      level: payload.level,
-      idsp: payload.idsp,
-      methodDisclosure: payload.method_disclosure,
-      failedOpen: rev.failedOpen,
+      verdict: {
+        claimType,
+        ok: true,
+        level: payload.level,
+        idsp: payload.idsp,
+        methodDisclosure: payload.method_disclosure,
+        failedOpen: rev.failedOpen,
+      },
+      endpointUrl: payload.endpoint_url,
     };
   } catch (e) {
     if (e instanceof VerificationError) {
-      return { claimType, ok: false, level: payload.level, idsp: payload.idsp, reason: e.reason, detail: e.message };
+      return {
+        verdict: { claimType, ok: false, level: payload.level, idsp: payload.idsp, reason: e.reason, detail: e.message },
+      };
     }
     throw e;
   }

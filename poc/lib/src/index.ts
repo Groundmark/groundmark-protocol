@@ -56,8 +56,13 @@ export type {
   AttestationPolicy,
   AttestationVerdict,
   ClaimVerdict,
+  ClaimBindingVerdict,
   EvaluateOptions,
 } from "./attestation/evaluate.ts";
+
+// Component 10 — Groundmark-Claim presentation header + binding
+export { parseGroundmarkClaim } from "./presentation/groundmarkClaim.ts";
+export type { PresentedClaim } from "./presentation/groundmarkClaim.ts";
 export {
   MockHttpsFetcher,
   FetchUnavailable,

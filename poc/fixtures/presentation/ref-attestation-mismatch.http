@@ -1,0 +1,9 @@
+POST /present HTTP/1.1
+Host: api.relying-party.example
+Content-Type: application/json
+Content-Digest: sha-256=:y7E9P8S0gAZvUm6uwJ87IoxHP6kmhAKyHsDpJ4cE8wQ=:
+Groundmark-Claim: claim-type="operator-verified"; ref="https://idsp.groundmark-poc.example/a/MISMATCHED00000000000000"
+Signature-Input: gm=("@method" "@authority" "@target-uri" "content-digest" "groundmark-claim");created=1747654321;expires=1747654621;nonce="f3a9c21e-4b07-4d8a-b1e2-9c3f0a7e5d12";keyid="agent.groundmark-poc.example";alg="ed25519"
+Signature: gm=:H96Gb6ZLjC1sYh7VQezUwCV6EVZX+7OTWGcMDI8WetYKvDVULNI3clJM7499/AUV6SUecxS7Angc73H23tzzDQ==:
+
+{"action":"present-credential"}

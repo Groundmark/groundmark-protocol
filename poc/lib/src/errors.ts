@@ -53,7 +53,13 @@ export type VerifyFailureReason =
   | "attestation_signature_invalid"
   | "attestation_fetch_failed"
   | "claim_revoked"
-  | "revocation_unavailable_fail_closed";
+  | "revocation_unavailable_fail_closed"
+  // --- Groundmark-Claim presentation binding (C10) ---
+  | "groundmark_claim_missing"
+  | "groundmark_claim_not_covered"
+  | "groundmark_claim_malformed"
+  | "groundmark_claim_dns_mismatch"
+  | "groundmark_claim_ref_mismatch";
 
 /** Internal control-flow error. Top-level verifiers convert this to a verdict. */
 export class VerificationError extends Error {

@@ -28,6 +28,7 @@ import { buildSignatureBase } from "./rfc9421/signatureBase.ts";
 import { verifyContentDigest } from "./rfc9421/contentDigest.ts";
 import { resolveAgentKey, parseKeyId } from "./agent/keyResolver.ts";
 import { verifyEd25519 } from "./crypto/ed25519.ts";
+import { parseGroundmarkClaim, type PresentedClaim } from "./presentation/groundmarkClaim.ts";
 import { VerificationError, type VerifyFailureReason } from "./errors.ts";
 
 /** Replay-protection store for nonces (relying-party state, core §5.4). */
@@ -49,6 +50,13 @@ export interface VerifyRequestOptions {
   nonceStore?: NonceStore;
   /** Scheme for @target-uri when parsing a raw HTTP request (default "https"). */
   scheme?: string;
+  /**
+   * Presentation profile (holder spec §6): require a `Groundmark-Claim` header,
+   * bound into the signature. Enforces the structural binding (present, covered,
+   * parseable); the claim_type↔DNS and ref↔attestation checks run in the
+   * attestation/policy layer (see evaluateAttestations).
+   */
+  requireGroundmarkClaim?: boolean;
 }
 
 export interface RequestVerdictOk {
@@ -60,6 +68,12 @@ export interface RequestVerdictOk {
   expires?: number;
   /** DNS TTL (seconds) of the _agentid answer — the cache ceiling for this key. */
   ttl: number;
+  /**
+   * The parsed, signature-covered `Groundmark-Claim` (present only when the
+   * presentation profile is active). Passed to the attestation layer for the
+   * claim_type↔DNS and ref↔attestation binding checks.
+   */
+  groundmarkClaim?: PresentedClaim;
 }
 
 export interface RequestVerdictFail {
@@ -142,6 +156,25 @@ async function run(
     throw new VerificationError("missing_covered_component", "bodied request must cover content-digest");
   }
 
+  // --- Presentation profile: Groundmark-Claim structural binding (§6.1/§6.2) ---
+  // Runs before signature verification so a missing/uncovered/malformed header is
+  // reported with its specific reason rather than as a generic signature failure.
+  let groundmarkClaim: PresentedClaim | undefined;
+  if (opts.requireGroundmarkClaim) {
+    const claimHeader = firstHeader(msg, "groundmark-claim");
+    if (claimHeader === undefined) {
+      throw new VerificationError("groundmark_claim_missing", "presentation requires a Groundmark-Claim header");
+    }
+    if (!covered.has("groundmark-claim")) {
+      // Present but unsigned — it could have been injected/altered in transit.
+      throw new VerificationError(
+        "groundmark_claim_not_covered",
+        "Groundmark-Claim header is not covered by the signature",
+      );
+    }
+    groundmarkClaim = parseGroundmarkClaim(claimHeader);
+  }
+
   const created = paramInteger(entry.params, "created");
   if (created === undefined) {
     throw new VerificationError("missing_signature_param", "created parameter is required");
@@ -216,6 +249,7 @@ async function run(
   };
   if (resolved.kid !== undefined) out.kid = resolved.kid;
   if (expires !== undefined) out.expires = expires;
+  if (groundmarkClaim !== undefined) out.groundmarkClaim = groundmarkClaim;
   return out;
 }
 
