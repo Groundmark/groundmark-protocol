@@ -15,7 +15,7 @@ const PRES_NOW = 1747654321;
 
 function newNonceStore(): NonceStore {
   const seen = new Set<string>();
-  return { has: (n) => seen.has(n), add: (n) => void seen.add(n) };
+  return { has: (n) => seen.has(n), consume: (n) => void seen.add(n) };
 }
 
 function noopLogger(): AuditLogger {
@@ -62,6 +62,38 @@ test("good composite presentation: request verifies, claim bound, policy satisfi
   assert.equal(v.attestations?.binding?.claimType, "operator-verified");
 });
 
+test("config: requireGroundmarkClaim without a fetcher/logger throws at setup (no silent half-check)", async () => {
+  // A policy that evaluates attestations, but the fetcher + logger needed to run
+  // the DNS/attestation half of the binding are missing -> must throw, not return
+  // a verdict reflecting only the request-layer half.
+  await assert.rejects(
+    () =>
+      verifyAgentRequest(readPres("presentation.http"), {
+        resolver: fixtureResolver(),
+        now: PRES_NOW,
+        policy: { levelFloor: 1, requiredClaimTypes: ["operator-verified"] },
+        requireGroundmarkClaim: true,
+        // no fetcher, no logger
+      }),
+    /requireGroundmarkClaim/,
+  );
+});
+
+test("config: requireGroundmarkClaim without an evaluating policy throws at setup", async () => {
+  await assert.rejects(
+    () =>
+      verifyAgentRequest(readPres("presentation.http"), {
+        resolver: fixtureResolver(),
+        fetcher: fixtureFetcher(),
+        logger: noopLogger(),
+        now: PRES_NOW,
+        requireGroundmarkClaim: true,
+        // no policy -> nothing would run steps 3–5
+      }),
+    /requireGroundmarkClaim/,
+  );
+});
+
 test("adversarial: Groundmark-Claim header absent -> groundmark_claim_missing", async () => {
   const v = await verifyAgentRequest(readPres("missing-groundmark-claim-header.http"), presentationOpts());
   assertRequestFail(v, "groundmark_claim_missing");
@@ -95,6 +127,38 @@ test("adversarial: ref does not match the attestation endpoint_url -> groundmark
   assert.equal(v.ok, false);
   assert.equal(v.attestations?.binding?.ok, false);
   assert.equal(v.attestations?.binding?.reason, "groundmark_claim_ref_mismatch");
+});
+
+test("adversarial: presenting a different claim than the policy requires -> groundmark_claim_policy_mismatch", async () => {
+  // Policy requires operator-verified; the holder presents the (genuinely signed)
+  // Canadian-presence claim instead. Both claims exist in DNS and verify, but a
+  // presentation of a different claim must NOT satisfy the operator-verified
+  // requirement. The failure is a claim/policy mismatch, NOT a missing claim
+  // (operator-verified is present in DNS and verifies).
+  const v = await verifyAgentRequest(readPres("presentation-canadian-presence.http"), presentationOpts({
+    policy: { levelFloor: 1, requiredClaimTypes: ["operator-verified"] },
+  }));
+  assert.equal(v.request.ok, true);
+  if (v.request.ok) {
+    assert.equal(v.request.groundmarkClaim?.claimType, "x-registry-example-canadian-presence");
+  }
+  assert.equal(v.ok, false);
+  assert.equal(v.attestations?.binding?.ok, false);
+  assert.equal(v.attestations?.binding?.reason, "groundmark_claim_policy_mismatch");
+  // operator-verified is in DNS and verified, so it is NOT reported as missing.
+  assert.deepEqual(v.attestations?.missingClaims, []);
+});
+
+test("adversarial: duplicate Groundmark-Claim headers -> groundmark_claim_duplicate", async () => {
+  // Inject a second Groundmark-Claim header into the good presentation. Phase 0
+  // permits exactly one; the verifier must reject rather than take the first.
+  const good = readPres("presentation.http").toString("latin1");
+  const dup = good.replace(
+    /(Groundmark-Claim: [^\r\n]*\r\n)/,
+    `$1Groundmark-Claim: claim-type="operator-verified"; ref="https://${IDSP}/a/second"\r\n`,
+  );
+  const v = await verifyAgentRequest(Buffer.from(dup, "latin1"), presentationOpts());
+  assertRequestFail(v, "groundmark_claim_duplicate");
 });
 
 test("adversarial: replayed presentation reusing a single-use nonce -> nonce_replayed", async () => {

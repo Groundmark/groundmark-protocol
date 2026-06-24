@@ -50,6 +50,24 @@ export async function verifyAgentRequest(
   raw: Buffer,
   opts: VerifyAgentRequestOptions,
 ): Promise<GroundmarkVerdict> {
+  // Configuration check (fail at setup, not silently at runtime): the presentation
+  // profile's binding spans the request layer (present/covered/parse) AND the
+  // attestation layer (claim_type↔DNS, ref↔attestation, claim↔policy). It is never
+  // acceptable to run only the request-layer half. So requiring a Groundmark-Claim
+  // demands a policy that evaluates attestations, plus a fetcher and logger.
+  if (opts.requireGroundmarkClaim) {
+    if (!policyEvaluatesAttestations(opts.policy)) {
+      throw new Error(
+        "requireGroundmarkClaim demands an attestation policy that evaluates claims " +
+          "(levelFloor > 0 or a non-empty requiredClaimTypes); otherwise the binding " +
+          "would only be half-checked",
+      );
+    }
+    if (!opts.fetcher || !opts.logger) {
+      throw new Error("requireGroundmarkClaim demands both a fetcher and a logger");
+    }
+  }
+
   const reqOpts: VerifyRequestOptions = { now: opts.now };
   if (opts.maxClockSkewSeconds !== undefined) reqOpts.maxClockSkewSeconds = opts.maxClockSkewSeconds;
   if (opts.label !== undefined) reqOpts.label = opts.label;

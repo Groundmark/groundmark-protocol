@@ -122,9 +122,9 @@ export async function evaluateAttestations(
     if (!ok) missingClaims.push(required);
   }
 
-  // Presentation binding (steps 3–4): only when the holder presented a claim.
+  // Presentation binding (steps 3–5): only when the holder presented a claim.
   const binding = opts.presentedClaim
-    ? computeBinding(opts.presentedClaim, records, verifiedEndpoint)
+    ? computeBinding(opts.presentedClaim, records, verifiedEndpoint, opts.policy.requiredClaimTypes ?? [])
     : undefined;
 
   const verdict: AttestationVerdict = {
@@ -138,15 +138,21 @@ export async function evaluateAttestations(
 }
 
 /**
- * Groundmark-Claim binding steps 3–4: the presented claim_type must be published
- * in DNS, and the presented ref must equal the verified attestation's endpoint_url.
+ * Groundmark-Claim binding steps 3–5:
+ *   3. the presented claim_type must be published in DNS;
+ *   5. it must be the claim that satisfies the policy — when the policy names
+ *      specific required claim types, the PRESENTED claim must be one of them, so
+ *      presenting a different (even valid) claim cannot satisfy the requirement;
+ *   4. the presented ref must equal the verified attestation's endpoint_url.
  * Detail strings reference claim_type only — never the ref URL (§7).
  */
 function computeBinding(
   presented: PresentedClaim,
   records: Awaited<ReturnType<typeof resolveClaims>>,
   verifiedEndpoint: Map<string, string>,
+  requiredClaimTypes: string[],
 ): ClaimBindingVerdict {
+  // Step 3 — published in DNS at all.
   if (!records.some((r) => r.claimType === presented.claimType)) {
     return {
       ok: false,
@@ -155,6 +161,18 @@ function computeBinding(
       detail: "presented claim_type is not published in any _agentclaim record",
     };
   }
+  // Step 5 — the presented claim must be the one the policy asked for. A policy
+  // requirement for a specific claim type is NOT satisfied by presenting a
+  // different claim, even if that other claim also exists and verifies.
+  if (requiredClaimTypes.length > 0 && !requiredClaimTypes.includes(presented.claimType)) {
+    return {
+      ok: false,
+      claimType: presented.claimType,
+      reason: "groundmark_claim_policy_mismatch",
+      detail: "presented claim_type is not among the policy's required claim types",
+    };
+  }
+  // Step 4 — ref binds to the verified attestation's endpoint_url.
   const endpointUrl = verifiedEndpoint.get(presented.claimType);
   if (endpointUrl === undefined) {
     return {

@@ -17,10 +17,12 @@ Run from the poc/ directory:
 Reproducible: existing private keys are reused (committed public keys stay stable),
 timestamps and ref= tokens are fixed, so re-running yields byte-identical output.
 """
+import argparse
 import base64
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -71,15 +73,32 @@ def canonical(obj) -> bytes:
 
 # --- keys --------------------------------------------------------------------
 
-def load_or_create_key(name: str) -> Ed25519PrivateKey:
-    """Load an existing private key, or generate and persist a new one.
+def load_or_create_key(name: str, *, rotate: bool) -> Ed25519PrivateKey:
+    """Load an existing private key, or (only with `rotate`) generate a new one.
 
-    Reuse keeps the committed public keys (and every signature derived from them)
-    stable across regenerations.
+    Reusing the existing private key keeps the committed public keys — and every
+    signature derived from them — byte-stable across regenerations.
+
+    The private keys are gitignored, so a FRESH CLONE does not carry them. In that
+    case regenerating would mint new keys and silently REPLACE the committed fixture
+    corpus, invalidating every committed signature. We refuse to do that by default:
+    if the key is absent we abort, unless `rotate` (--rotate-keys) was passed to
+    explicitly authorize a fixture-key rotation. A fresh clone can always still RUN
+    and VERIFY the committed fixtures; it just cannot reproduce byte-identical
+    signatures without the original keys.
     """
     path = KEYS / f"{name}.private.pem"
     if path.exists():
         return serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not rotate:
+        sys.exit(
+            f"ERROR: {path.name} is absent.\n"
+            f"Refusing to regenerate: a fresh clone does not carry the gitignored private\n"
+            f"fixture keys, so generating new ones would REPLACE the committed fixture corpus\n"
+            f"and invalidate every committed signature. (A fresh clone can still run and verify\n"
+            f"the committed fixtures — it just cannot reproduce byte-identical signatures.)\n"
+            f"To intentionally rotate the fixture keys, re-run with --rotate-keys."
+        )
     key = Ed25519PrivateKey.generate()
     path.write_bytes(key.private_bytes(
         serialization.Encoding.PEM,
@@ -335,8 +354,19 @@ def build_presentation(
 # --- main --------------------------------------------------------------------
 
 def main() -> None:
-    agent_key = load_or_create_key("agent")
-    idsp_key = load_or_create_key("idsp")
+    parser = argparse.ArgumentParser(description="Generate the Groundmark PoC fixture corpus.")
+    parser.add_argument(
+        "--rotate-keys",
+        action="store_true",
+        help="permit generating NEW fixture private keys when they are absent. This "
+             "replaces the committed corpus and invalidates existing committed "
+             "signatures. Without this flag, the script aborts if a private key is "
+             "missing rather than silently rekeying.",
+    )
+    rotate = parser.parse_args().rotate_keys
+
+    agent_key = load_or_create_key("agent", rotate=rotate)
+    idsp_key = load_or_create_key("idsp", rotate=rotate)
 
     agent_pub = raw_pub_b64url(agent_key)
     idsp_pub = raw_pub_b64url(idsp_key)
@@ -454,6 +484,13 @@ def main() -> None:
     # 6. nonce replay: byte-identical to the good case; a second presentation reusing
     #    the same single-use nonce. The fault is observed at the RP's nonce store.
     (pres / "nonce-replay.http").write_bytes(good_http)
+
+    # A second, fully-valid presentation that asserts the *Canadian-presence* claim
+    # (also published in DNS). Used to prove the claim↔policy binding: presenting
+    # this against a policy that requires operator-verified MUST fail — a different
+    # claim cannot satisfy a requirement for a specific claim type.
+    canadian_http, _ = build_presentation(agent_key, claim_type="x-registry-example-canadian-presence", ref=cp_ref)
+    (pres / "presentation-canadian-presence.http").write_bytes(canadian_http)
 
     print("Generated:")
     print(f"  keys/        agent.pub.b64url, idsp.pub.b64url (private keys gitignored)")

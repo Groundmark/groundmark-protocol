@@ -65,3 +65,27 @@ A verifier reconstructs the signature base from the covered components and verif
 distinct base64 encodings: `p=` and attestation `signature` are **base64url, no padding**
 (RFC 4648); the RFC 9421 `Signature` value and the `Content-Digest` are **standard
 base64** (RFC 9530 sf-binary).
+
+## `presentation/` — composite presentation vector + binding variants
+
+A **presentation** is the holder agent's output (holder spec §6): a Level 0 request that
+additionally carries a signature-bound `Groundmark-Claim` header, binding one presented
+attestation to one specific request so it cannot be stripped or substituted in transit.
+The `nonce` is an RFC 9421 signature **parameter** (`;nonce="…"`, inside the always-signed
+`@signature-params`), giving per-request replay protection — it is not a covered HTTP
+field. These exercise the verifier's `Groundmark-Claim` binding check.
+
+| File | What it is / single property it proves |
+| --- | --- |
+| `presentation.http` (+ `signature-base.txt`) | The good case. Agent-signed; covers `@method @authority @target-uri content-digest groundmark-claim`; carries a `nonce` parameter and a `Groundmark-Claim: claim-type="operator-verified"; ref="…"` header bound to the good attestation. Verifies clean. |
+| `missing-groundmark-claim-header.http` | Header absent → `groundmark_claim_missing`. |
+| `groundmark-claim-not-in-covered-components.http` | Header present but not in the signature's covered components (could be injected/altered) → `groundmark_claim_not_covered`. |
+| `missing-nonce.http` | `nonce` parameter absent → `nonce_missing`. |
+| `claim-type-dns-mismatch.http` | Header `claim-type` matches no `_agentclaim` DNS record → `groundmark_claim_dns_mismatch`. |
+| `ref-attestation-mismatch.http` | Header `ref=` ≠ the fetched attestation's `endpoint_url` → `groundmark_claim_ref_mismatch`. |
+| `nonce-replay.http` | Byte-identical to the good case; a second presentation reusing the same single-use nonce → `nonce_replayed`. |
+| `presentation-canadian-presence.http` | A second fully-valid presentation asserting the Canadian-presence claim. Presented against a policy that requires `operator-verified`, it must fail with `groundmark_claim_policy_mismatch` — a different claim cannot satisfy a requirement for a specific claim type. |
+
+Duplicate `Groundmark-Claim` headers are rejected (`groundmark_claim_duplicate`); only one
+is permitted in Phase 0. The nonce is consumed **only after full verification succeeds**, so
+a failed request leaves its nonce reusable by a later valid request.

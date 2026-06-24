@@ -56,10 +56,12 @@ export type VerifyFailureReason =
   | "revocation_unavailable_fail_closed"
   // --- Groundmark-Claim presentation binding (C10) ---
   | "groundmark_claim_missing"
+  | "groundmark_claim_duplicate"
   | "groundmark_claim_not_covered"
   | "groundmark_claim_malformed"
   | "groundmark_claim_dns_mismatch"
-  | "groundmark_claim_ref_mismatch";
+  | "groundmark_claim_ref_mismatch"
+  | "groundmark_claim_policy_mismatch";
 
 /** Internal control-flow error. Top-level verifiers convert this to a verdict. */
 export class VerificationError extends Error {

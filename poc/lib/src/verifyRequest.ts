@@ -33,8 +33,15 @@ import { VerificationError, type VerifyFailureReason } from "./errors.ts";
 
 /** Replay-protection store for nonces (relying-party state, core §5.4). */
 export interface NonceStore {
+  /** True if `nonce` has already been consumed by a fully-verified request. */
   has(nonce: string): boolean;
-  add(nonce: string): void;
+  /**
+   * Mark `nonce` as consumed. Called exactly once, and ONLY after the request has
+   * fully verified (agent key, Content-Digest, and signature). A request that
+   * fails any check MUST NOT consume its nonce, so a later valid request may reuse
+   * it. Implementations SHOULD make this atomic with the preceding `has` check.
+   */
+  consume(nonce: string): void;
 }
 
 export interface VerifyRequestOptions {
@@ -161,9 +168,19 @@ async function run(
   // reported with its specific reason rather than as a generic signature failure.
   let groundmarkClaim: PresentedClaim | undefined;
   if (opts.requireGroundmarkClaim) {
-    const claimHeader = firstHeader(msg, "groundmark-claim");
-    if (claimHeader === undefined) {
+    const claimHeaders = msg.headers.get("groundmark-claim");
+    if (claimHeaders === undefined || claimHeaders.length === 0) {
       throw new VerificationError("groundmark_claim_missing", "presentation requires a Groundmark-Claim header");
+    }
+    // Phase 0 permits exactly one presented claim. Multiple headers are rejected
+    // rather than silently taking the first — the others would be unbound. NOTE:
+    // multi-claim presentation is deferred to a later phase, which will define an
+    // explicit signing rule (each header covered) and an RP selection rule.
+    if (claimHeaders.length > 1) {
+      throw new VerificationError(
+        "groundmark_claim_duplicate",
+        "multiple Groundmark-Claim headers present; exactly one is permitted in Phase 0",
+      );
     }
     if (!covered.has("groundmark-claim")) {
       // Present but unsigned — it could have been injected/altered in transit.
@@ -172,7 +189,7 @@ async function run(
         "Groundmark-Claim header is not covered by the signature",
       );
     }
-    groundmarkClaim = parseGroundmarkClaim(claimHeader);
+    groundmarkClaim = parseGroundmarkClaim(claimHeaders[0]!);
   }
 
   const created = paramInteger(entry.params, "created");
@@ -199,6 +216,10 @@ async function run(
   if (expires !== undefined && expires <= opts.now) {
     throw new VerificationError("expires_in_past", `expires (${expires}) is not in the future`);
   }
+  // Nonce replay is CHECKED here, but the nonce is NOT consumed until the request
+  // has fully verified (below). A request that fails a later check must leave the
+  // nonce reusable by a subsequent valid request (core §5.4).
+  let nonceToConsume: string | undefined;
   if (opts.requireNonce) {
     const nonce = paramString(entry.params, "nonce");
     if (nonce === undefined) {
@@ -210,7 +231,7 @@ async function run(
     if (opts.nonceStore.has(nonce)) {
       throw new VerificationError("nonce_replayed", "nonce has already been observed");
     }
-    opts.nonceStore.add(nonce);
+    nonceToConsume = nonce;
   }
 
   // --- Step 3: resolve the agent key via DNSSEC (§5.5.3) ---
@@ -239,6 +260,10 @@ async function run(
   if (!verifyEd25519(resolved.publicKey, Buffer.from(base, "utf8"), signature)) {
     throw new VerificationError("signature_invalid", "Ed25519 signature verification failed");
   }
+
+  // Full verification succeeded — only now consume the nonce (atomic with the
+  // earlier has() check; nothing between here and return can fail).
+  if (nonceToConsume !== undefined) opts.nonceStore!.consume(nonceToConsume);
 
   const out: RequestVerdictOk = {
     ok: true,
