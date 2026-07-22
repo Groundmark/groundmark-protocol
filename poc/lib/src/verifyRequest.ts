@@ -28,12 +28,18 @@ import { buildSignatureBase } from "./rfc9421/signatureBase.ts";
 import { verifyContentDigest } from "./rfc9421/contentDigest.ts";
 import { resolveAgentKey, parseKeyId } from "./agent/keyResolver.ts";
 import { verifyEd25519 } from "./crypto/ed25519.ts";
+import { parseGroundmarkClaim, type PresentedClaim } from "./presentation/groundmarkClaim.ts";
 import { VerificationError, type VerifyFailureReason } from "./errors.ts";
 
 /** Replay-protection store for nonces (relying-party state, core §5.4). */
 export interface NonceStore {
-  has(nonce: string): boolean;
-  add(nonce: string): void;
+  /**
+   * Atomically consume `nonce` if it has not been seen. Returns true only for the
+   * one request that wins. `expiresAt` is a UNIX second expiry derived from the
+   * signed request freshness window; implementations store only a nonce digest in
+   * production.
+   */
+  consumeOnce(nonce: string, expiresAt: number): Promise<boolean>;
 }
 
 export interface VerifyRequestOptions {
@@ -49,6 +55,13 @@ export interface VerifyRequestOptions {
   nonceStore?: NonceStore;
   /** Scheme for @target-uri when parsing a raw HTTP request (default "https"). */
   scheme?: string;
+  /**
+   * Presentation profile (holder spec §6): require a `Groundmark-Claim` header,
+   * bound into the signature. Enforces the structural binding (present, covered,
+   * parseable); the claim_type↔DNS and ref↔attestation checks run in the
+   * attestation/policy layer (see evaluateAttestations).
+   */
+  requireGroundmarkClaim?: boolean;
 }
 
 export interface RequestVerdictOk {
@@ -58,8 +71,21 @@ export interface RequestVerdictOk {
   kid?: string;
   created: number;
   expires?: number;
+  /**
+   * Signature-verified nonce. It is returned so a composite verifier can commit
+   * it at the final acceptance boundary; callers MUST NOT log raw nonce values.
+   */
+  nonce?: string;
+  /** Expiry to pass to NonceStore.consumeOnce for this nonce. */
+  nonceExpiresAt?: number;
   /** DNS TTL (seconds) of the _agentid answer — the cache ceiling for this key. */
   ttl: number;
+  /**
+   * The parsed, signature-covered `Groundmark-Claim` (present only when the
+   * presentation profile is active). Passed to the attestation layer for the
+   * claim_type↔DNS and ref↔attestation binding checks.
+   */
+  groundmarkClaim?: PresentedClaim;
 }
 
 export interface RequestVerdictFail {
@@ -79,7 +105,7 @@ export async function verifyRequestMessage(
   opts: VerifyRequestOptions,
 ): Promise<RequestVerdict> {
   try {
-    const verdict = await run(msg, resolver, opts);
+    const verdict = await run(msg, resolver, opts, { commitNonce: true });
     return verdict;
   } catch (e) {
     if (e instanceof VerificationError) {
@@ -104,10 +130,56 @@ export async function verifyRequest(
   return verifyRequestMessage(msg, resolver, opts);
 }
 
+/**
+ * Internal top-level verifier entry point. It verifies the Level 0 request but
+ * leaves a verified nonce uncommitted so the composite attestation/policy layer
+ * can commit it immediately before returning final acceptance.
+ */
+export async function verifyRequestUncommitted(
+  raw: Buffer,
+  resolver: DnssecResolver,
+  opts: VerifyRequestOptions,
+): Promise<RequestVerdict> {
+  let msg: HttpRequestMessage;
+  try {
+    msg = parseHttpRequest(raw, opts.scheme !== undefined ? { scheme: opts.scheme } : {});
+  } catch (e) {
+    return { ok: false, reason: "sig_input_malformed", message: `malformed HTTP request: ${(e as Error).message}` };
+  }
+  try {
+    return await run(msg, resolver, opts, { commitNonce: false });
+  } catch (e) {
+    if (e instanceof VerificationError) {
+      return { ok: false, reason: e.reason, message: e.message };
+    }
+    throw e;
+  }
+}
+
+export async function commitRequestNonce(
+  request: RequestVerdictOk,
+  nonceStore: NonceStore | undefined,
+): Promise<RequestVerdictFail | undefined> {
+  if (request.nonce === undefined) return undefined;
+  if (nonceStore === undefined) {
+    throw new Error("verified request carried a nonce but no nonceStore was provided");
+  }
+  const expiresAt = request.nonceExpiresAt;
+  if (expiresAt === undefined) {
+    throw new Error("verified request carried a nonce without a nonce expiry");
+  }
+  const consumed = await nonceStore.consumeOnce(request.nonce, expiresAt);
+  if (!consumed) {
+    return { ok: false, reason: "nonce_replayed", message: "nonce has already been observed" };
+  }
+  return undefined;
+}
+
 async function run(
   msg: HttpRequestMessage,
   resolver: DnssecResolver,
   opts: VerifyRequestOptions,
+  commit: { commitNonce: boolean },
 ): Promise<RequestVerdict> {
   const skew = opts.maxClockSkewSeconds ?? 300;
 
@@ -142,6 +214,35 @@ async function run(
     throw new VerificationError("missing_covered_component", "bodied request must cover content-digest");
   }
 
+  // --- Presentation profile: Groundmark-Claim structural binding (§6.1/§6.2) ---
+  // Runs before signature verification so a missing/uncovered/malformed header is
+  // reported with its specific reason rather than as a generic signature failure.
+  let groundmarkClaim: PresentedClaim | undefined;
+  if (opts.requireGroundmarkClaim) {
+    const claimHeaders = msg.headers.get("groundmark-claim");
+    if (claimHeaders === undefined || claimHeaders.length === 0) {
+      throw new VerificationError("groundmark_claim_missing", "presentation requires a Groundmark-Claim header");
+    }
+    // Phase 0 permits exactly one presented claim. Multiple headers are rejected
+    // rather than silently taking the first — the others would be unbound. NOTE:
+    // multi-claim presentation is deferred to a later phase, which will define an
+    // explicit signing rule (each header covered) and an RP selection rule.
+    if (claimHeaders.length > 1) {
+      throw new VerificationError(
+        "groundmark_claim_duplicate",
+        "multiple Groundmark-Claim headers present; exactly one is permitted in Phase 0",
+      );
+    }
+    if (!covered.has("groundmark-claim")) {
+      // Present but unsigned — it could have been injected/altered in transit.
+      throw new VerificationError(
+        "groundmark_claim_not_covered",
+        "Groundmark-Claim header is not covered by the signature",
+      );
+    }
+    groundmarkClaim = parseGroundmarkClaim(claimHeaders[0]!);
+  }
+
   const created = paramInteger(entry.params, "created");
   if (created === undefined) {
     throw new VerificationError("missing_signature_param", "created parameter is required");
@@ -166,6 +267,11 @@ async function run(
   if (expires !== undefined && expires <= opts.now) {
     throw new VerificationError("expires_in_past", `expires (${expires}) is not in the future`);
   }
+  // A nonce is required/parsed here, but it is atomically consumed only at the
+  // final acceptance boundary: here for Level 0-only verification, or by the
+  // composite verifier after attestation policy succeeds.
+  let verifiedNonce: string | undefined;
+  let nonceExpiresAt: number | undefined;
   if (opts.requireNonce) {
     const nonce = paramString(entry.params, "nonce");
     if (nonce === undefined) {
@@ -174,10 +280,8 @@ async function run(
     if (!opts.nonceStore) {
       throw new Error("requireNonce set but no nonceStore provided");
     }
-    if (opts.nonceStore.has(nonce)) {
-      throw new VerificationError("nonce_replayed", "nonce has already been observed");
-    }
-    opts.nonceStore.add(nonce);
+    verifiedNonce = nonce;
+    nonceExpiresAt = expires ?? created + skew;
   }
 
   // --- Step 3: resolve the agent key via DNSSEC (§5.5.3) ---
@@ -216,6 +320,13 @@ async function run(
   };
   if (resolved.kid !== undefined) out.kid = resolved.kid;
   if (expires !== undefined) out.expires = expires;
+  if (verifiedNonce !== undefined) out.nonce = verifiedNonce;
+  if (nonceExpiresAt !== undefined) out.nonceExpiresAt = nonceExpiresAt;
+  if (groundmarkClaim !== undefined) out.groundmarkClaim = groundmarkClaim;
+  if (commit.commitNonce) {
+    const nonceFailure = await commitRequestNonce(out, opts.nonceStore);
+    if (nonceFailure !== undefined) return nonceFailure;
+  }
   return out;
 }
 

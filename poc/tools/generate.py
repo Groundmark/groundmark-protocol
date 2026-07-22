@@ -17,10 +17,12 @@ Run from the poc/ directory:
 Reproducible: existing private keys are reused (committed public keys stay stable),
 timestamps and ref= tokens are fixed, so re-running yields byte-identical output.
 """
+import argparse
 import base64
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -71,15 +73,32 @@ def canonical(obj) -> bytes:
 
 # --- keys --------------------------------------------------------------------
 
-def load_or_create_key(name: str) -> Ed25519PrivateKey:
-    """Load an existing private key, or generate and persist a new one.
+def load_or_create_key(name: str, *, rotate: bool) -> Ed25519PrivateKey:
+    """Load an existing private key, or (only with `rotate`) generate a new one.
 
-    Reuse keeps the committed public keys (and every signature derived from them)
-    stable across regenerations.
+    Reusing the existing private key keeps the committed public keys — and every
+    signature derived from them — byte-stable across regenerations.
+
+    The private keys are gitignored, so a FRESH CLONE does not carry them. In that
+    case regenerating would mint new keys and silently REPLACE the committed fixture
+    corpus, invalidating every committed signature. We refuse to do that by default:
+    if the key is absent we abort, unless `rotate` (--rotate-keys) was passed to
+    explicitly authorize a fixture-key rotation. A fresh clone can always still RUN
+    and VERIFY the committed fixtures; it just cannot reproduce byte-identical
+    signatures without the original keys.
     """
     path = KEYS / f"{name}.private.pem"
     if path.exists():
         return serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not rotate:
+        sys.exit(
+            f"ERROR: {path.name} is absent.\n"
+            f"Refusing to regenerate: a fresh clone does not carry the gitignored private\n"
+            f"fixture keys, so generating new ones would REPLACE the committed fixture corpus\n"
+            f"and invalidate every committed signature. (A fresh clone can still run and verify\n"
+            f"the committed fixtures — it just cannot reproduce byte-identical signatures.)\n"
+            f"To intentionally rotate the fixture keys, re-run with --rotate-keys."
+        )
     key = Ed25519PrivateKey.generate()
     path.write_bytes(key.private_bytes(
         serialization.Encoding.PEM,
@@ -252,11 +271,102 @@ def build_signed_request(agent_key: Ed25519PrivateKey):
     return http, sig_base
 
 
+# --- composite presentation vector (holder -> RP) ----------------------------
+
+# Fixed values keep the regenerated presentation byte-stable.
+PRES_CREATED = 1747654321
+PRES_EXPIRES = PRES_CREATED + 300
+PRES_NONCE = "f3a9c21e-4b07-4d8a-b1e2-9c3f0a7e5d12"   # single-use, fixed for the fixture
+PRES_AUTHORITY = "api.relying-party.example"
+PRES_PATH = "/present"
+PRES_BODY = b'{"action":"present-credential"}'
+
+
+def build_presentation(
+    agent_key: Ed25519PrivateKey,
+    *,
+    claim_type: str,
+    ref: str,
+    include_claim_header: bool = True,
+    claim_in_covered: bool = True,
+    include_nonce_param: bool = True,
+):
+    """Build a composite Groundmark *presentation* request, signed by the AGENT key.
+
+    A presentation is the holder agent's output (holder spec Section 6): a Level 0
+    RFC 9421 request that additionally carries a `Groundmark-Claim` header and binds
+    it into the signature by listing `groundmark-claim` among the covered components.
+
+    NONCE PLACEMENT: per RFC 9421 Section 2.2 and the holder spec's own worked
+    example (Section 6.4), the nonce is a signature *parameter* (`;nonce="..."`),
+    carried inside `@signature-params` (which is always signed) — NOT a covered
+    component (there is no `nonce` HTTP field to cover). The covered-component inner
+    list is therefore `(... "groundmark-claim")`; nonce binds via the params line.
+
+    The keyword flags drive the single-fault adversarial variants: drop the header,
+    drop it from the covered set, or drop the nonce param — exactly one mutation each.
+    """
+    target_uri = f"https://{PRES_AUTHORITY}{PRES_PATH}"
+    # Content-Digest uses STANDARD base64 (RFC 9530 sf-binary), like the request vector.
+    digest = base64.b64encode(hashlib.sha256(PRES_BODY).digest()).decode()
+    content_digest = f"sha-256=:{digest}:"
+    claim_value = f'claim-type="{claim_type}"; ref="{ref}"'
+
+    covered = ['"@method"', '"@authority"', '"@target-uri"', '"content-digest"']
+    if claim_in_covered:
+        covered.append('"groundmark-claim"')
+    covered_str = "(" + " ".join(covered) + ")"
+
+    sig_params = f"{covered_str};created={PRES_CREATED};expires={PRES_EXPIRES}"
+    if include_nonce_param:
+        sig_params += f';nonce="{PRES_NONCE}"'
+    sig_params += f';keyid="{AGENT_DOMAIN}";alg="ed25519"'
+
+    # RFC 9421 signature base: one line per covered component, @signature-params last.
+    base_lines = [
+        '"@method": POST',
+        f'"@authority": {PRES_AUTHORITY}',
+        f'"@target-uri": {target_uri}',
+        f'"content-digest": {content_digest}',
+    ]
+    if claim_in_covered:
+        base_lines.append(f'"groundmark-claim": {claim_value}')
+    base_lines.append(f'"@signature-params": {sig_params}')
+    sig_base = "\n".join(base_lines)
+
+    # Signature header value is STANDARD base64 (sf-binary), inside colons.
+    sig = base64.b64encode(agent_key.sign(sig_base.encode())).decode()
+
+    header_lines = [
+        f"POST {PRES_PATH} HTTP/1.1",
+        f"Host: {PRES_AUTHORITY}",
+        "Content-Type: application/json",
+        f"Content-Digest: {content_digest}",
+    ]
+    if include_claim_header:
+        header_lines.append(f"Groundmark-Claim: {claim_value}")
+    header_lines.append(f"Signature-Input: gm={sig_params}")
+    header_lines.append(f"Signature: gm=:{sig}:")
+    http = ("\r\n".join(header_lines) + "\r\n\r\n").encode() + PRES_BODY
+    return http, sig_base
+
+
 # --- main --------------------------------------------------------------------
 
 def main() -> None:
-    agent_key = load_or_create_key("agent")
-    idsp_key = load_or_create_key("idsp")
+    parser = argparse.ArgumentParser(description="Generate the Groundmark PoC fixture corpus.")
+    parser.add_argument(
+        "--rotate-keys",
+        action="store_true",
+        help="permit generating NEW fixture private keys when they are absent. This "
+             "replaces the committed corpus and invalidates existing committed "
+             "signatures. Without this flag, the script aborts if a private key is "
+             "missing rather than silently rekeying.",
+    )
+    rotate = parser.parse_args().rotate_keys
+
+    agent_key = load_or_create_key("agent", rotate=rotate)
+    idsp_key = load_or_create_key("idsp", rotate=rotate)
 
     agent_pub = raw_pub_b64url(agent_key)
     idsp_pub = raw_pub_b64url(idsp_key)
@@ -337,6 +447,51 @@ def main() -> None:
     (FIX / "request" / "signed-request.http").write_bytes(http)
     write_text(FIX / "request" / "signature-base.txt", sig_base)
 
+    # --- composite presentation vector + single-fault adversarials ---
+    # The good case binds the operator-verified attestation (the same ref= served
+    # from DNS and matching its endpoint_url) into the request signature.
+    pres = FIX / "presentation"
+    good_http, good_base = build_presentation(agent_key, claim_type="operator-verified", ref=ov_ref)
+    (pres / "presentation.http").write_bytes(good_http)
+    write_text(pres / "signature-base.txt", good_base)
+
+    # 1. header absent (covered set still lists groundmark-claim) -> the only change
+    #    is the dropped header line; the verifier rejects on the missing header.
+    http1, _ = build_presentation(agent_key, claim_type="operator-verified", ref=ov_ref,
+                                  include_claim_header=False)
+    (pres / "missing-groundmark-claim-header.http").write_bytes(http1)
+
+    # 2. header present but NOT covered -> re-signed over the reduced covered set, so
+    #    the signature is valid and the sole fault is the missing binding.
+    http2, _ = build_presentation(agent_key, claim_type="operator-verified", ref=ov_ref,
+                                  claim_in_covered=False)
+    (pres / "groundmark-claim-not-in-covered-components.http").write_bytes(http2)
+
+    # 3. nonce param absent -> re-signed without it; fails the nonce policy.
+    http3, _ = build_presentation(agent_key, claim_type="operator-verified", ref=ov_ref,
+                                  include_nonce_param=False)
+    (pres / "missing-nonce.http").write_bytes(http3)
+
+    # 4. claim_type in header matches no _agentclaim DNS record (ref unchanged).
+    http4, _ = build_presentation(agent_key, claim_type="operator-unverified", ref=ov_ref)
+    (pres / "claim-type-dns-mismatch.http").write_bytes(http4)
+
+    # 5. ref= does not match the fetched attestation's endpoint_url (claim_type unchanged).
+    http5, _ = build_presentation(agent_key, claim_type="operator-verified",
+                                  ref=f"{ISSUER_BASE_URL}/a/MISMATCHED00000000000000")
+    (pres / "ref-attestation-mismatch.http").write_bytes(http5)
+
+    # 6. nonce replay: byte-identical to the good case; a second presentation reusing
+    #    the same single-use nonce. The fault is observed at the RP's nonce store.
+    (pres / "nonce-replay.http").write_bytes(good_http)
+
+    # A second, fully-valid presentation that asserts the *Canadian-presence* claim
+    # (also published in DNS). Used to prove the claim↔policy binding: presenting
+    # this against a policy that requires operator-verified MUST fail — a different
+    # claim cannot satisfy a requirement for a specific claim type.
+    canadian_http, _ = build_presentation(agent_key, claim_type="x-registry-example-canadian-presence", ref=cp_ref)
+    (pres / "presentation-canadian-presence.http").write_bytes(canadian_http)
+
     print("Generated:")
     print(f"  keys/        agent.pub.b64url, idsp.pub.b64url (private keys gitignored)")
     print(f"  dns/         3 record files")
@@ -344,6 +499,7 @@ def main() -> None:
     print(f"  fixtures/good/         2")
     print(f"  fixtures/adversarial/  7 cases (+ revoked.revocation.json)")
     print(f"  fixtures/request/      RFC 9421 vector")
+    print(f"  fixtures/presentation/ composite presentation + 6 adversarial variants")
 
 
 if __name__ == "__main__":

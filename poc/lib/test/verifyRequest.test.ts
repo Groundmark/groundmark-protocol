@@ -20,6 +20,16 @@ function assertFail(v: RequestVerdict, reason: VerifyFailureReason) {
   if (v.ok === false) assert.equal(v.reason, reason);
 }
 
+class MemoryNonceStore implements NonceStore {
+  readonly consumed = new Map<string, number>();
+
+  async consumeOnce(nonce: string, expiresAt: number): Promise<boolean> {
+    if (this.consumed.has(nonce)) return false;
+    this.consumed.set(nonce, expiresAt);
+    return true;
+  }
+}
+
 test("the committed RFC 9421 request vector verifies end to end", async () => {
   const raw = readPoc("fixtures", "request", "signed-request.http");
   const v = await verifyRequest(raw, fixtureResolver(), { now: FIXTURE_NOW });
@@ -96,8 +106,7 @@ test("missing Signature-Input -> sig_input_missing", async () => {
 });
 
 test("nonce replay: second use of a nonce -> nonce_replayed", async () => {
-  const seen = new Set<string>();
-  const store: NonceStore = { has: (n) => seen.has(n), add: (n) => void seen.add(n) };
+  const store = new MemoryNonceStore();
   const opts = { now: 7000, requireNonce: true, nonceStore: store } as const;
 
   const first = signRequest({ agentDomain: AGENT, created: 7000, nonce: "abc123" });
@@ -111,9 +120,30 @@ test("nonce replay: second use of a nonce -> nonce_replayed", async () => {
   assertFail(v2, "nonce_replayed");
 });
 
+test("Level 0 nonce commit is atomic under concurrent identical requests", async () => {
+  const store = new MemoryNonceStore();
+  const signed = signRequest({
+    agentDomain: AGENT,
+    created: 10_000,
+    expires: 10_300,
+    nonce: "level0-concurrent",
+  });
+  const resolver = resolverForKey(AGENT, signed.publicKeyB64url);
+
+  const results = await Promise.all([
+    verifyRequestMessage(signed.message, resolver, { now: 10_000, requireNonce: true, nonceStore: store }),
+    verifyRequestMessage(signed.message, resolver, { now: 10_000, requireNonce: true, nonceStore: store }),
+  ]);
+
+  assert.equal(results.filter((v) => v.ok).length, 1, JSON.stringify(results));
+  const replay = results.find((v) => !v.ok);
+  assert.ok(replay);
+  assertFail(replay, "nonce_replayed");
+  assert.equal(store.consumed.get("level0-concurrent"), 10_300);
+});
+
 test("requireNonce but no nonce present -> nonce_missing", async () => {
-  const seen = new Set<string>();
-  const store: NonceStore = { has: (n) => seen.has(n), add: (n) => void seen.add(n) };
+  const store = new MemoryNonceStore();
   const { message, publicKeyB64url } = signRequest({ agentDomain: AGENT, created: 8000 });
   const v = await verifyRequestMessage(message, resolverForKey(AGENT, publicKeyB64url), {
     now: 8000,
@@ -128,4 +158,33 @@ test("DNSSEC failure at agent lookup -> dnssec_validation_failed", async () => {
   const r = fixtureResolver().setFailure(`_agentid.${AGENT}`, "bogus");
   const v = await verifyRequest(raw, r, { now: FIXTURE_NOW });
   assertFail(v, "dnssec_validation_failed");
+});
+
+test("a failed request does not consume its nonce; a later valid request may reuse it", async () => {
+  const store = new MemoryNonceStore();
+  const NONCE = "shared-nonce-9000";
+
+  // 1) Invalid request (tampered signature) carrying NONCE -> signature_invalid.
+  const bad = signRequest({ agentDomain: AGENT, created: 9000, nonce: NONCE });
+  const badSig = bad.message.headers.get("signature")![0]!;
+  const bytes = Buffer.from(badSig.slice("gm=:".length, -1), "base64");
+  bytes[0] = bytes[0]! ^ 0x01;
+  bad.message.headers.set("signature", [`gm=:${bytes.toString("base64")}:`]);
+  const v1 = await verifyRequestMessage(bad.message, resolverForKey(AGENT, bad.publicKeyB64url), {
+    now: 9000,
+    requireNonce: true,
+    nonceStore: store,
+  });
+  assertFail(v1, "signature_invalid");
+  assert.equal(store.consumed.has(NONCE), false, "a failed request must NOT consume its nonce");
+
+  // 2) A fresh, valid request reusing the same nonce must still succeed.
+  const good = signRequest({ agentDomain: AGENT, created: 9000, nonce: NONCE });
+  const v2 = await verifyRequestMessage(good.message, resolverForKey(AGENT, good.publicKeyB64url), {
+    now: 9000,
+    requireNonce: true,
+    nonceStore: store,
+  });
+  assert.equal(v2.ok, true, JSON.stringify(v2));
+  assert.equal(store.consumed.has(NONCE), true, "a fully-verified request consumes its nonce");
 });

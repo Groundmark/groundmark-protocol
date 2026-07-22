@@ -44,6 +44,8 @@ export type VerifyFailureReason =
   | "unknown_schema_version"
   | "wrong_subject"
   | "endpoint_mismatch"
+  | "attestation_claim_type_mismatch"
+  | "attestation_idsp_mismatch"
   | "attestation_expired"
   | "claim_exp_passed"
   | "below_policy_level"
@@ -53,7 +55,15 @@ export type VerifyFailureReason =
   | "attestation_signature_invalid"
   | "attestation_fetch_failed"
   | "claim_revoked"
-  | "revocation_unavailable_fail_closed";
+  | "revocation_unavailable_fail_closed"
+  // --- Groundmark-Claim presentation binding (C10) ---
+  | "groundmark_claim_missing"
+  | "groundmark_claim_duplicate"
+  | "groundmark_claim_not_covered"
+  | "groundmark_claim_malformed"
+  | "groundmark_claim_dns_mismatch"
+  | "groundmark_claim_ref_mismatch"
+  | "groundmark_claim_policy_mismatch";
 
 /** Internal control-flow error. Top-level verifiers convert this to a verdict. */
 export class VerificationError extends Error {

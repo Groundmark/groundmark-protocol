@@ -5,11 +5,13 @@ This directory is the **runtime-agnostic substrate** for the registry-as-IDSP, L
 attestation JSON, revocation responses, and a graded fixture corpus — i.e. **the world
 the verification library will run against**.
 
-It deliberately does **not** contain the verification library, a relying-party harness,
-or any dynamic service. The library's runtime is undecided (waiting on Mark);
-`lib/` is intentionally left unscaffolded. The generator here (`tools/generate.py`,
-Python + `cryptography`) is **incidental tooling** and implies nothing about the
-library's eventual language.
+The relying-party **verification library now lives in `lib/`** (TypeScript / Node ≥ 24,
+run via native type-stripping; tests with `node:test`). It verifies a request against
+the core draft (Level 0) and evaluates attestations against the companion draft, and it
+includes the **`Groundmark-Claim` presentation binding** (`lib/src/presentation/`). The
+generator here (`tools/generate.py`, Python + `cryptography`) is **incidental tooling**
+that builds the runtime-agnostic fixture corpus; its language implies nothing about the
+library's runtime.
 
 ## Authoritative sources
 
@@ -21,17 +23,30 @@ draft disagree, **the draft wins**:
 - `draft-noss-jeftovic-groundmark-attestation-00.md` — attestation JSON schema (§6),
   claim vocabulary (§5), signature construction (§7). Worked example §6.4.
 
-## Regenerate
+## Run and verify vs. regenerate
 
-One command, from this directory:
+A **fresh clone can run and verify** the committed fixtures with no extra setup —
+`cd lib && npm test` exercises the whole corpus (the committed public keys and
+signatures are all that verification needs).
+
+A fresh clone **cannot regenerate byte-identical signatures**, because the signing
+private keys are **gitignored and never committed** (`keys/*.private.pem`). Without the
+original keys, regeneration could only produce a *different* corpus signed by new keys.
+
+To prevent that from happening silently, the generator **fails safely**: if a required
+private key is absent it **aborts** rather than minting new keys and replacing the
+committed corpus.
 
 ```sh
-python3 tools/generate.py
+python3 tools/generate.py            # reuses existing private keys -> byte-identical;
+                                     # ABORTS if a private key is absent
+python3 tools/generate.py --rotate-keys   # explicitly authorize a fixture-key rotation
+                                          # (generates new keys; replaces the corpus)
 ```
 
-It reuses existing private keys (so committed public keys — and every signature derived
-from them — stay stable) and uses fixed timestamps and `ref=` tokens, so re-running
-produces **byte-identical** output. Requires `python3` with the `cryptography` package.
+With the original keys present, regeneration reuses them and — together with fixed
+timestamps, a fixed nonce, and deterministic `ref=` tokens — produces **byte-identical**
+output. Requires `python3` with the `cryptography` package.
 
 ## Layout
 
@@ -43,9 +58,24 @@ dns/                   TXT record values ready to publish (committed)
 attestations/          good signed attestations + matching revocation responses
 fixtures/good/         the good cases (verify clean)
 fixtures/adversarial/  minimal single-fault mutations (see fixtures/README.md)
-fixtures/request/      RFC 9421 signed-request vector
-lib/                   intentionally absent — runtime undecided
+fixtures/request/      RFC 9421 signed-request vector (Level 0 request auth)
+fixtures/presentation/ composite presentation vector + single-fault variants (see fixtures/README.md)
+lib/                   the relying-party verification library (TypeScript / Node)
 ```
+
+## The presentation fixtures (`fixtures/presentation/`)
+
+A **presentation** is the holder agent's output: a Level 0 RFC 9421 request that also
+carries a signature-bound `Groundmark-Claim` header, binding a specific attestation to a
+specific request. `presentation.http` (+ `signature-base.txt`) is the good case; it
+covers `@method @authority @target-uri content-digest groundmark-claim` and carries a
+`nonce` parameter. The single-fault variants each isolate one binding/replay check
+(missing header, header not signature-covered, missing nonce, claim_type∉DNS,
+ref≠endpoint_url, nonce replay). The verifier also rejects cryptographically valid
+attestations whose signed `claim_type` or `idsp` disagrees with the DNS `_agentclaim`
+record, before revocation or policy evaluation. `presentation-canadian-presence.http` is
+a second valid presentation (asserting the Canadian-presence claim) used to prove that
+presenting a different claim cannot satisfy a policy that requires a specific claim type.
 
 ## What the good case demonstrates
 

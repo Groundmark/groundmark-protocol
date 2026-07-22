@@ -33,11 +33,16 @@ attestation canonicalization; each dependency is justified in the PR.
 | 7 | IDSP key resolver + attestation-signature verifier | ✅ | `src/idsp/idspKeyResolver.ts`, `src/attestation/verify.ts` |
 | 8 | Revocation + caching engine | ✅ | `src/revocation/revocation.ts`, `src/cache/ttl.ts` |
 | 9 | Policy + verdict layer | ✅ | `src/attestation/evaluate.ts`, `src/verify.ts` |
+| 10 | Groundmark-Claim presentation binding + atomic nonce finalization | ✅ | `src/presentation/groundmarkClaim.ts`, `src/verifyRequest.ts`, `src/verify.ts` |
 
 Components 1–4 are the self-standing **Level 0** core: they establish that a
 request came from a party controlling the agent domain's DNSSEC-protected key,
 and nothing more. Components 5–9 add the optional attestation layer; the
 top-level `verifyAgentRequest` ties them together under a relying-party policy.
+Presentation-profile verification additionally requires a signature-covered
+`Groundmark-Claim` header, binds DNS `claim=`/`idsp=`/`ref=` to the signed attestation
+payload, and commits a nonce with `NonceStore.consumeOnce(nonce, expiresAt)` only after
+the full composite verdict is acceptable.
 
 ## Dependencies
 
