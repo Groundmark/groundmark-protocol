@@ -44,6 +44,8 @@ export type VerifyFailureReason =
   | "unknown_schema_version"
   | "wrong_subject"
   | "endpoint_mismatch"
+  | "attestation_claim_type_mismatch"
+  | "attestation_idsp_mismatch"
   | "attestation_expired"
   | "claim_exp_passed"
   | "below_policy_level"

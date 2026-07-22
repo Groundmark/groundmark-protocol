@@ -33,15 +33,13 @@ import { VerificationError, type VerifyFailureReason } from "./errors.ts";
 
 /** Replay-protection store for nonces (relying-party state, core §5.4). */
 export interface NonceStore {
-  /** True if `nonce` has already been consumed by a fully-verified request. */
-  has(nonce: string): boolean;
   /**
-   * Mark `nonce` as consumed. Called exactly once, and ONLY after the request has
-   * fully verified (agent key, Content-Digest, and signature). A request that
-   * fails any check MUST NOT consume its nonce, so a later valid request may reuse
-   * it. Implementations SHOULD make this atomic with the preceding `has` check.
+   * Atomically consume `nonce` if it has not been seen. Returns true only for the
+   * one request that wins. `expiresAt` is a UNIX second expiry derived from the
+   * signed request freshness window; implementations store only a nonce digest in
+   * production.
    */
-  consume(nonce: string): void;
+  consumeOnce(nonce: string, expiresAt: number): Promise<boolean>;
 }
 
 export interface VerifyRequestOptions {
@@ -73,6 +71,13 @@ export interface RequestVerdictOk {
   kid?: string;
   created: number;
   expires?: number;
+  /**
+   * Signature-verified nonce. It is returned so a composite verifier can commit
+   * it at the final acceptance boundary; callers MUST NOT log raw nonce values.
+   */
+  nonce?: string;
+  /** Expiry to pass to NonceStore.consumeOnce for this nonce. */
+  nonceExpiresAt?: number;
   /** DNS TTL (seconds) of the _agentid answer — the cache ceiling for this key. */
   ttl: number;
   /**
@@ -100,7 +105,7 @@ export async function verifyRequestMessage(
   opts: VerifyRequestOptions,
 ): Promise<RequestVerdict> {
   try {
-    const verdict = await run(msg, resolver, opts);
+    const verdict = await run(msg, resolver, opts, { commitNonce: true });
     return verdict;
   } catch (e) {
     if (e instanceof VerificationError) {
@@ -125,10 +130,56 @@ export async function verifyRequest(
   return verifyRequestMessage(msg, resolver, opts);
 }
 
+/**
+ * Internal top-level verifier entry point. It verifies the Level 0 request but
+ * leaves a verified nonce uncommitted so the composite attestation/policy layer
+ * can commit it immediately before returning final acceptance.
+ */
+export async function verifyRequestUncommitted(
+  raw: Buffer,
+  resolver: DnssecResolver,
+  opts: VerifyRequestOptions,
+): Promise<RequestVerdict> {
+  let msg: HttpRequestMessage;
+  try {
+    msg = parseHttpRequest(raw, opts.scheme !== undefined ? { scheme: opts.scheme } : {});
+  } catch (e) {
+    return { ok: false, reason: "sig_input_malformed", message: `malformed HTTP request: ${(e as Error).message}` };
+  }
+  try {
+    return await run(msg, resolver, opts, { commitNonce: false });
+  } catch (e) {
+    if (e instanceof VerificationError) {
+      return { ok: false, reason: e.reason, message: e.message };
+    }
+    throw e;
+  }
+}
+
+export async function commitRequestNonce(
+  request: RequestVerdictOk,
+  nonceStore: NonceStore | undefined,
+): Promise<RequestVerdictFail | undefined> {
+  if (request.nonce === undefined) return undefined;
+  if (nonceStore === undefined) {
+    throw new Error("verified request carried a nonce but no nonceStore was provided");
+  }
+  const expiresAt = request.nonceExpiresAt;
+  if (expiresAt === undefined) {
+    throw new Error("verified request carried a nonce without a nonce expiry");
+  }
+  const consumed = await nonceStore.consumeOnce(request.nonce, expiresAt);
+  if (!consumed) {
+    return { ok: false, reason: "nonce_replayed", message: "nonce has already been observed" };
+  }
+  return undefined;
+}
+
 async function run(
   msg: HttpRequestMessage,
   resolver: DnssecResolver,
   opts: VerifyRequestOptions,
+  commit: { commitNonce: boolean },
 ): Promise<RequestVerdict> {
   const skew = opts.maxClockSkewSeconds ?? 300;
 
@@ -216,10 +267,11 @@ async function run(
   if (expires !== undefined && expires <= opts.now) {
     throw new VerificationError("expires_in_past", `expires (${expires}) is not in the future`);
   }
-  // Nonce replay is CHECKED here, but the nonce is NOT consumed until the request
-  // has fully verified (below). A request that fails a later check must leave the
-  // nonce reusable by a subsequent valid request (core §5.4).
-  let nonceToConsume: string | undefined;
+  // A nonce is required/parsed here, but it is atomically consumed only at the
+  // final acceptance boundary: here for Level 0-only verification, or by the
+  // composite verifier after attestation policy succeeds.
+  let verifiedNonce: string | undefined;
+  let nonceExpiresAt: number | undefined;
   if (opts.requireNonce) {
     const nonce = paramString(entry.params, "nonce");
     if (nonce === undefined) {
@@ -228,10 +280,8 @@ async function run(
     if (!opts.nonceStore) {
       throw new Error("requireNonce set but no nonceStore provided");
     }
-    if (opts.nonceStore.has(nonce)) {
-      throw new VerificationError("nonce_replayed", "nonce has already been observed");
-    }
-    nonceToConsume = nonce;
+    verifiedNonce = nonce;
+    nonceExpiresAt = expires ?? created + skew;
   }
 
   // --- Step 3: resolve the agent key via DNSSEC (§5.5.3) ---
@@ -261,10 +311,6 @@ async function run(
     throw new VerificationError("signature_invalid", "Ed25519 signature verification failed");
   }
 
-  // Full verification succeeded — only now consume the nonce (atomic with the
-  // earlier has() check; nothing between here and return can fail).
-  if (nonceToConsume !== undefined) opts.nonceStore!.consume(nonceToConsume);
-
   const out: RequestVerdictOk = {
     ok: true,
     agentDomain: resolved.domain,
@@ -274,7 +320,13 @@ async function run(
   };
   if (resolved.kid !== undefined) out.kid = resolved.kid;
   if (expires !== undefined) out.expires = expires;
+  if (verifiedNonce !== undefined) out.nonce = verifiedNonce;
+  if (nonceExpiresAt !== undefined) out.nonceExpiresAt = nonceExpiresAt;
   if (groundmarkClaim !== undefined) out.groundmarkClaim = groundmarkClaim;
+  if (commit.commitNonce) {
+    const nonceFailure = await commitRequestNonce(out, opts.nonceStore);
+    if (nonceFailure !== undefined) return nonceFailure;
+  }
   return out;
 }
 

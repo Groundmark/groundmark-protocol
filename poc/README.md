@@ -71,9 +71,11 @@ specific request. `presentation.http` (+ `signature-base.txt`) is the good case;
 covers `@method @authority @target-uri content-digest groundmark-claim` and carries a
 `nonce` parameter. The single-fault variants each isolate one binding/replay check
 (missing header, header not signature-covered, missing nonce, claim_type∉DNS,
-ref≠endpoint_url, nonce replay). `presentation-canadian-presence.http` is a second valid
-presentation (asserting the Canadian-presence claim) used to prove that presenting a
-different claim cannot satisfy a policy that requires a specific claim type.
+ref≠endpoint_url, nonce replay). The verifier also rejects cryptographically valid
+attestations whose signed `claim_type` or `idsp` disagrees with the DNS `_agentclaim`
+record, before revocation or policy evaluation. `presentation-canadian-presence.http` is
+a second valid presentation (asserting the Canadian-presence claim) used to prove that
+presenting a different claim cannot satisfy a policy that requires a specific claim type.
 
 ## What the good case demonstrates
 

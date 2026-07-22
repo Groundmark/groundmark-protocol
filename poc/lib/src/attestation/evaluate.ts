@@ -90,6 +90,7 @@ export async function evaluateAttestations(
   // claim_type -> endpoint_url of the verified attestation (internal only — the
   // endpoint URL is confidential and never surfaced on the verdict, §7).
   const verifiedEndpoint = new Map<string, string>();
+  const attestationBindingFailures = new Map<string, VerifyFailureReason>();
 
   for (const record of records) {
     if (record.kind === "val") {
@@ -107,11 +108,17 @@ export async function evaluateAttestations(
       }
     }
 
-    const { verdict, endpointUrl } = await evaluateRefClaim(
-      record.claimType, record.ref, record.idsp, agentDomain, opts,
-    );
+    const { verdict, endpointUrl, verifiedClaimType } = await evaluateRefClaim(record, agentDomain, opts);
     claims.push(verdict);
-    if (endpointUrl !== undefined) verifiedEndpoint.set(record.claimType, endpointUrl);
+    if (endpointUrl !== undefined && verifiedClaimType !== undefined) {
+      verifiedEndpoint.set(verifiedClaimType, endpointUrl);
+    }
+    if (
+      verdict.reason === "attestation_claim_type_mismatch" ||
+      verdict.reason === "attestation_idsp_mismatch"
+    ) {
+      attestationBindingFailures.set(record.claimType, verdict.reason);
+    }
   }
 
   const missingClaims: string[] = [];
@@ -124,7 +131,13 @@ export async function evaluateAttestations(
 
   // Presentation binding (steps 3–5): only when the holder presented a claim.
   const binding = opts.presentedClaim
-    ? computeBinding(opts.presentedClaim, records, verifiedEndpoint, opts.policy.requiredClaimTypes ?? [])
+    ? computeBinding(
+      opts.presentedClaim,
+      records,
+      verifiedEndpoint,
+      attestationBindingFailures,
+      opts.policy.requiredClaimTypes ?? [],
+    )
     : undefined;
 
   const verdict: AttestationVerdict = {
@@ -150,6 +163,7 @@ function computeBinding(
   presented: PresentedClaim,
   records: Awaited<ReturnType<typeof resolveClaims>>,
   verifiedEndpoint: Map<string, string>,
+  attestationBindingFailures: Map<string, VerifyFailureReason>,
   requiredClaimTypes: string[],
 ): ClaimBindingVerdict {
   // Step 3 — published in DNS at all.
@@ -175,6 +189,15 @@ function computeBinding(
   // Step 4 — ref binds to the verified attestation's endpoint_url.
   const endpointUrl = verifiedEndpoint.get(presented.claimType);
   if (endpointUrl === undefined) {
+    const bindingFailure = attestationBindingFailures.get(presented.claimType);
+    if (bindingFailure !== undefined) {
+      return {
+        ok: false,
+        claimType: presented.claimType,
+        reason: bindingFailure,
+        detail: "presented claim's DNS record does not match the signed attestation payload",
+      };
+    }
     return {
       ok: false,
       claimType: presented.claimType,
@@ -194,23 +217,30 @@ function computeBinding(
 }
 
 async function evaluateRefClaim(
-  claimType: string,
-  ref: string,
-  idsp: string,
+  record: Extract<Awaited<ReturnType<typeof resolveClaims>>[number], { kind: "ref" }>,
   agentDomain: string,
   opts: EvaluateOptions,
-): Promise<{ verdict: ClaimVerdict; endpointUrl?: string }> {
+): Promise<{ verdict: ClaimVerdict; endpointUrl?: string; verifiedClaimType?: string }> {
   // Fetch the attestation. Errors reference the claim type, never the URL (§7).
   let body: Buffer;
   try {
-    const res = await opts.fetcher.get(ref);
+    const res = await opts.fetcher.get(record.ref);
     if (res.status < 200 || res.status >= 300) {
-      return { verdict: { claimType, ok: false, reason: "attestation_fetch_failed", detail: `HTTP ${res.status}` } };
+      return {
+        verdict: { claimType: record.claimType, ok: false, reason: "attestation_fetch_failed", detail: `HTTP ${res.status}` },
+      };
     }
     body = res.body;
   } catch (e) {
     if (e instanceof FetchUnavailable) {
-      return { verdict: { claimType, ok: false, reason: "attestation_fetch_failed", detail: "endpoint unreachable" } };
+      return {
+        verdict: {
+          claimType: record.claimType,
+          ok: false,
+          reason: "attestation_fetch_failed",
+          detail: "endpoint unreachable",
+        },
+      };
     }
     throw e;
   }
@@ -221,16 +251,37 @@ async function evaluateRefClaim(
     const parsed = parseAttestation(body);
     payload = await verifyAttestation(parsed, {
       agentDomain,
-      refUrl: ref,
+      refUrl: record.ref,
       now: opts.now,
       levelFloor: opts.policy.levelFloor,
       resolver: opts.resolver,
     });
   } catch (e) {
     if (e instanceof VerificationError) {
-      return { verdict: { claimType, ok: false, reason: e.reason, detail: e.message } };
+      return { verdict: { claimType: record.claimType, ok: false, reason: e.reason, detail: e.message } };
     }
     throw e;
+  }
+
+  if (payload.claim_type !== record.claimType) {
+    return {
+      verdict: {
+        claimType: record.claimType,
+        ok: false,
+        reason: "attestation_claim_type_mismatch",
+        detail: "signed attestation claim_type does not match the DNS _agentclaim claim",
+      },
+    };
+  }
+  if (payload.idsp !== record.idsp) {
+    return {
+      verdict: {
+        claimType: record.claimType,
+        ok: false,
+        reason: "attestation_idsp_mismatch",
+        detail: "signed attestation idsp does not match the DNS _agentclaim idsp",
+      },
+    };
   }
 
   // Revocation (C8).
@@ -256,7 +307,7 @@ async function evaluateRefClaim(
     });
     return {
       verdict: {
-        claimType,
+        claimType: payload.claim_type,
         ok: true,
         level: payload.level,
         idsp: payload.idsp,
@@ -264,11 +315,19 @@ async function evaluateRefClaim(
         failedOpen: rev.failedOpen,
       },
       endpointUrl: payload.endpoint_url,
+      verifiedClaimType: payload.claim_type,
     };
   } catch (e) {
     if (e instanceof VerificationError) {
       return {
-        verdict: { claimType, ok: false, level: payload.level, idsp: payload.idsp, reason: e.reason, detail: e.message },
+        verdict: {
+          claimType: payload.claim_type,
+          ok: false,
+          level: payload.level,
+          idsp: payload.idsp,
+          reason: e.reason,
+          detail: e.message,
+        },
       };
     }
     throw e;

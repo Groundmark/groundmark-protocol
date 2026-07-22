@@ -87,5 +87,9 @@ field. These exercise the verifier's `Groundmark-Claim` binding check.
 | `presentation-canadian-presence.http` | A second fully-valid presentation asserting the Canadian-presence claim. Presented against a policy that requires `operator-verified`, it must fail with `groundmark_claim_policy_mismatch` — a different claim cannot satisfy a requirement for a specific claim type. |
 
 Duplicate `Groundmark-Claim` headers are rejected (`groundmark_claim_duplicate`); only one
-is permitted in Phase 0. The nonce is consumed **only after full verification succeeds**, so
-a failed request leaves its nonce reusable by a later valid request.
+is permitted in Phase 0. The verifier additionally binds the signed attestation payload's
+`claim_type` and `idsp` back to the DNS `_agentclaim` record; those cases are covered by
+in-memory signed fixtures in the verifier tests so no private fixture keys are committed.
+The nonce is consumed through one atomic `consumeOnce` call **only after final acceptance**,
+so a failed request or failed composite attestation/policy check leaves its nonce reusable
+by a later valid request.

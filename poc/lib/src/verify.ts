@@ -12,6 +12,8 @@ import type { HttpsFetcher } from "./attestation/fetcher.ts";
 import type { AuditLogger } from "./revocation/revocation.ts";
 import {
   verifyRequest,
+  verifyRequestUncommitted,
+  commitRequestNonce,
   type VerifyRequestOptions,
   type RequestVerdict,
 } from "./verifyRequest.ts";
@@ -50,13 +52,15 @@ export async function verifyAgentRequest(
   raw: Buffer,
   opts: VerifyAgentRequestOptions,
 ): Promise<GroundmarkVerdict> {
+  const policy = opts.policy;
+  const evaluatesAttestations = policyEvaluatesAttestations(policy);
   // Configuration check (fail at setup, not silently at runtime): the presentation
   // profile's binding spans the request layer (present/covered/parse) AND the
   // attestation layer (claim_type↔DNS, ref↔attestation, claim↔policy). It is never
   // acceptable to run only the request-layer half. So requiring a Groundmark-Claim
   // demands a policy that evaluates attestations, plus a fetcher and logger.
   if (opts.requireGroundmarkClaim) {
-    if (!policyEvaluatesAttestations(opts.policy)) {
+    if (!evaluatesAttestations) {
       throw new Error(
         "requireGroundmarkClaim demands an attestation policy that evaluates claims " +
           "(levelFloor > 0 or a non-empty requiredClaimTypes); otherwise the binding " +
@@ -76,10 +80,12 @@ export async function verifyAgentRequest(
   if (opts.scheme !== undefined) reqOpts.scheme = opts.scheme;
   if (opts.requireGroundmarkClaim !== undefined) reqOpts.requireGroundmarkClaim = opts.requireGroundmarkClaim;
 
-  const request = await verifyRequest(raw, opts.resolver, reqOpts);
+  const request = await (evaluatesAttestations
+    ? verifyRequestUncommitted(raw, opts.resolver, reqOpts)
+    : verifyRequest(raw, opts.resolver, reqOpts));
   if (!request.ok) return { ok: false, request };
 
-  if (!policyEvaluatesAttestations(opts.policy)) {
+  if (!policyEvaluatesAttestations(policy)) {
     return { ok: true, request };
   }
 
@@ -91,7 +97,7 @@ export async function verifyAgentRequest(
     resolver: opts.resolver,
     fetcher: opts.fetcher,
     now: opts.now,
-    policy: opts.policy,
+    policy,
     logger: opts.logger,
     transactionId: opts.transactionId ?? "unspecified",
   };
@@ -100,6 +106,14 @@ export async function verifyAgentRequest(
   if (request.groundmarkClaim !== undefined) evalOpts.presentedClaim = request.groundmarkClaim;
 
   const attestations = await evaluateAttestations(request.agentDomain, evalOpts);
+  if (!attestations.policySatisfied) {
+    return { ok: false, request, attestations };
+  }
 
-  return { ok: attestations.policySatisfied, request, attestations };
+  const nonceFailure = await commitRequestNonce(request, opts.nonceStore);
+  if (nonceFailure !== undefined) {
+    return { ok: false, request: nonceFailure, attestations };
+  }
+
+  return { ok: true, request, attestations };
 }
