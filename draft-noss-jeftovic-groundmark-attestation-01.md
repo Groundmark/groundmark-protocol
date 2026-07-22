@@ -503,11 +503,12 @@ Claim profiles MUST define the permitted combinations of `role`, `entity_type`, 
 
 Each entry in `executions` MUST include:
 
-- **method** (REQUIRED, string) — A method identifier drawn from the Groundmark Method Identifier registry established by this document (Section 13) or from an explicitly installed extension profile.
+- **method_id** (REQUIRED, string) — A method identifier drawn from the Groundmark Method Identifier registry established by this document (Section 13) or from an explicitly installed extension profile.
+- **method_version** (REQUIRED, string) — Version of the method profile, technology, or authoritative-source integration.
 - **execution_mode** (REQUIRED, string) — A machine-readable execution mode. This document defines `idsp-direct`, `idsp-operated-technology`, and `authoritative-source-query`, and reserves `idtp-managed-service` for the companion method-provenance specification.
 - **performed_at** (OPTIONAL, string) — Time at which the method execution was completed, formatted per [RFC3339].
 - **provider** (OPTIONAL, string) — Domain name of a material method provider, authoritative source, or technology provider, when disclosure is required by the method profile.
-- **version** (OPTIONAL, string) — Version of the method, technology, or authoritative-source integration when that version is material to relying-party policy.
+- **provider_version** (OPTIONAL, string) — Version of the material technology provider or authoritative-source integration when that version is distinct from `method_version` and material to relying-party policy.
 - **evidence_class** (OPTIONAL, array of strings) — Evidence categories examined, such as `"domain-control"`, `"cryptographic-key-control"`, `"organization-record"`, `"government-issued-id"`, or `"biometric-liveness"`.
 
 The IDSP remains accountable to the relying party for the attestation it signs. Structured method provenance makes material method dependencies visible to policy; it does not transfer the IDSP's issuer accountability to a technology provider or subcontractor. The full IDSP/IDTP managed-receipt profile is outside the scope of this document.
@@ -542,7 +543,8 @@ The following non-normative example illustrates the JSON payload served by an ID
     "profile_version": "1.0",
     "executions": [
       {
-        "method": "dnssec-domain-challenge",
+        "method_id": "dnssec-domain-challenge",
+        "method_version": "1.0",
         "execution_mode": "idsp-direct",
         "performed_at": "2026-05-19T11:48:00Z",
         "evidence_class": [
@@ -550,7 +552,8 @@ The following non-normative example illustrates the JSON payload served by an ID
         ]
       },
       {
-        "method": "agent-key-proof-of-possession",
+        "method_id": "agent-key-proof-of-possession",
+        "method_version": "1.0",
         "execution_mode": "idsp-direct",
         "performed_at": "2026-05-19T11:52:00Z",
         "evidence_class": [
@@ -558,7 +561,8 @@ The following non-normative example illustrates the JSON payload served by an ID
         ]
       },
       {
-        "method": "organization-existence-check",
+        "method_id": "organization-existence-check",
+        "method_version": "1.0",
         "execution_mode": "authoritative-source-query",
         "performed_at": "2026-05-19T11:55:00Z",
         "provider": "registry.example.gov",
@@ -567,7 +571,8 @@ The following non-normative example illustrates the JSON payload served by an ID
         ]
       },
       {
-        "method": "terms-accepted",
+        "method_id": "terms-accepted",
+        "method_version": "1.0",
         "execution_mode": "idsp-direct",
         "performed_at": "2026-05-19T11:57:00Z"
       }
