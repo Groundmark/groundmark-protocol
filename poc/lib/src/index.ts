@@ -78,3 +78,18 @@ export { buildSignatureBase } from "./rfc9421/signatureBase.ts";
 // Failure reasons
 export { VerificationError } from "./errors.ts";
 export type { VerifyFailureReason } from "./errors.ts";
+
+// Building blocks for composite verifiers and issuance-side implementations.
+// An IDSP verifying proof-of-possession, or a holder agent constructing a
+// signed presentation, needs the same primitives the verifier is built from —
+// exporting them keeps signer and verifier from drifting. The uncommitted
+// entry point + commitRequestNonce pair exists precisely so a composite flow
+// can consume the nonce at its own final acceptance boundary (see
+// verifyRequest.ts).
+export { verifyRequestUncommitted, commitRequestNonce } from "./verifyRequest.ts";
+export { jcsBytes } from "./attestation/canonical.ts";
+export { ed25519PublicKeyFromBase64url, verifyEd25519 } from "./crypto/ed25519.ts";
+export { base64urlToBytes, bytesToBase64url, base64ToBytes } from "./encoding.ts";
+export { parseAgentIdRecord, assertMultiRecordValidity } from "./dns/agentidRecord.ts";
+export type { AgentIdRecord } from "./dns/agentidRecord.ts";
+export type { SignatureInputEntry } from "./rfc9421/parse.ts";
