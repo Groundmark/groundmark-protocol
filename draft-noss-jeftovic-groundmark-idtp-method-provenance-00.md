@@ -3,8 +3,8 @@
 **Internet-Draft:** `draft-noss-jeftovic-groundmark-idtp-method-provenance-00`
 **Stream:** Independent Submission
 **Intended status:** Experimental
-**Expires:** 23 January 2027
-**Date:** 22 July 2026
+**Expires:** 6 March 2027
+**Date:** 2 September 2026
 
 **Authors:**
 - E. Noss - Groundmark
@@ -24,7 +24,7 @@ Internet-Drafts are working documents of the Internet Engineering Task Force (IE
 
 Internet-Drafts are draft documents valid for a maximum of six months and may be updated, replaced, or obsoleted by other documents at any time. It is inappropriate to use Internet-Drafts as reference material or to cite them other than as "work in progress."
 
-This Internet-Draft will expire on 23 January 2027.
+This Internet-Draft will expire on 6 March 2027.
 
 ## Copyright Notice
 
@@ -74,7 +74,7 @@ This document defines the method-provenance layer for those deployments. The goa
 
 ### 1.1. Relationship to Groundmark Attestations
 
-This document extends the `method_disclosure.executions` structure in [I-D.noss-jeftovic-groundmark-attestation]. A Groundmark attestation remains the public object evaluated by a relying party. Private method receipts described here are evidence retained by the IDSP, or disclosed under a separate audit or dispute process, and are not required to be public attestation payloads.
+The base `method_disclosure.executions` fields and types are defined in [I-D.noss-jeftovic-groundmark-attestation]. This document profiles those fields for IDSP/IDTP deployments and adds the managed Method Receipt rules. It does not define a second or incompatible execution-object shape. A Groundmark attestation remains the public object evaluated by a relying party. Private method receipts described here are evidence retained by the IDSP, or disclosed under a separate audit or dispute process, and are not public attestation payloads.
 
 ### 1.2. Non-Goals
 
@@ -118,7 +118,7 @@ The IDSP function:
 1. accepts the operator relationship governed by the Groundmark attestation framework;
 2. decides whether a claim should be issued;
 3. signs the public Groundmark attestation;
-4. signs or operates the status mechanism for the attestation; and
+4. signs status objects for the attestation using its purpose-separated status key; and
 5. remains accountable to the relying party for the attestation's contents and method disclosure.
 
 ### 3.2. IDTP Function
@@ -150,7 +150,7 @@ This document defines the following execution modes:
 - **idsp-direct** - The IDSP performs the check using its own personnel, systems, and process.
 - **idsp-operated-technology** - The IDSP performs the check using material third-party software, models, data, or hosted components, but the IDSP executes the method and controls the issuance decision.
 - **idtp-managed-service** - An IDTP executes the method and returns a signed Method Receipt to the IDSP.
-- **authoritative-source-query** - The IDSP or IDTP queries an authoritative source, with executor, source class, source freshness, and source identity disclosed as required by the method profile.
+- **authoritative-source-query** - The IDSP directly controls a query to an authoritative source, with source class, source freshness, and source identity disclosed as required by the method profile. When an IDTP controls the query and returns a managed result, the execution mode is `idtp-managed-service` and the same source fields are populated.
 
 Free-text method descriptions are supplementary only and MUST NOT be the sole policy input for a method execution.
 
@@ -168,7 +168,7 @@ A public Method Execution object appears inside `method_disclosure.executions` i
 - **source_class** (OPTIONAL, string) - Class of authoritative source queried, when applicable.
 - **source_domain** (OPTIONAL, string) - Domain name of the authoritative source or material data provider, when disclosure is required by the method profile.
 - **source_observed_at** (OPTIONAL, string) - Time at which source data was observed, formatted per [RFC3339].
-- **provider** (OPTIONAL, object) - Material technology or service provider, when different from `performed_by`.
+- **provider** (OPTIONAL, object) - Material technology or service provider, when different from `performed_by`. The object contains `domain` (REQUIRED, DNS name) and optional `service` and `version` strings.
 - **receipt_digest** (OPTIONAL, string) - Digest of the private signed Method Receipt. REQUIRED for `idtp-managed-service`.
 
 Example:
@@ -202,9 +202,11 @@ The `performed_by` object has the following fields:
 - **key_id** (OPTIONAL, string) - Key identifier for the role-specific key.
 - **key_thumbprint** (OPTIONAL, string) - RFC 7638 thumbprint of the role-specific key.
 
+`key_id` or `key_thumbprint` MUST identify a key actually used for, or authorized to vouch for, that method execution. An IDSP MUST NOT populate either field with the parent attestation-signing key merely because that key later signs the containing attestation.
+
 For `idsp-operated-technology`, `performed_by.role` is `idsp`; a separate `provider` object identifies the material technology provider. This prevents an IDSP-operated vendor tool from being mistaken for a managed IDTP execution.
 
-For `authoritative-source-query`, `performed_by` identifies the party that executed the query. The `source_class`, `source_domain`, and `source_observed_at` fields identify the source and freshness of the observed data as required by the method profile.
+For `authoritative-source-query`, `performed_by` identifies the IDSP that controlled the query. The `source_class`, `source_domain`, and `source_observed_at` fields identify the source and freshness of the observed data as required by the method profile.
 
 ## 5. Private Signed Method Receipts
 
@@ -260,7 +262,9 @@ Fields:
 
 The Method Receipt signature is computed over the JCS [RFC8785] canonical serialization of the strict parsed receipt object with the top-level `signature` field removed. Receipts MUST use UTF-8, reject duplicate object member names at every nesting level, and follow the I-JSON constraints in [RFC7493].
 
-The IDTP's method-receipt public key MUST be authenticated by DNSSEC using a Groundmark-compatible key publication mechanism and MUST be authorized by the IDSP for the receipt purpose. A relying party or auditor evaluating the receipt later MUST verify that the key was authorized for `method-receipt-signing` at the time of receipt issuance.
+The IDTP's method-receipt public key MUST be published at `_agentid.<performing_idtp>` with a distinct `kid=` matching `performer_key_id` and `purpose=method-receipt-signing`, and it MUST be authenticated through DNSSEC under the core protocol. The IDSP MUST authorize the IDTP domain and selected key for that purpose. A relying party or auditor evaluating the receipt later MUST verify that the key was authorized for `method-receipt-signing` at the time of receipt issuance.
+
+The public `receipt_digest` is SHA-256 over the complete JCS serialization of the signed Method Receipt, including its `signature`, encoded as `sha-256:<base64url>` without padding. The same strict parse tree used for signature verification MUST be used to produce this canonical form.
 
 ### 5.3. Replay and Single-Use Semantics
 
@@ -299,8 +303,7 @@ Example `method_disclosure`:
       "execution_mode": "idsp-direct",
       "performed_by": {
         "role": "idsp",
-        "domain": "app.groundmark.id",
-        "key_id": "idsp-2026-01"
+        "domain": "app.groundmark.id"
       },
       "performed_at": "2026-07-21T15:57:00Z",
       "evidence_class": [
@@ -339,6 +342,8 @@ A mixed organization that performs multiple Groundmark functions MUST use purpos
 - offline trust-bundle signing, when applicable.
 
 A key authorized for one purpose MUST NOT satisfy another purpose. For example, an IDTP method-receipt key MUST NOT satisfy an IDSP attestation-signing policy, and an attestation-signing key MUST NOT satisfy an offline trust-bundle signing policy.
+
+Public IDSP and IDTP keys MUST use the purpose-scoped `_agentid` publication defined by the core protocol. IDSP attestation and status keys use `purpose=attestation-signing` and `purpose=status-signing`, respectively. IDTP Method Receipt keys use `purpose=method-receipt-signing`. Offline trust-bundle keys SHOULD be distributed through an independently pinned trust-root mechanism rather than the online `_agentid` RRset.
 
 Trust policy MUST be role scoped. It SHOULD identify:
 
@@ -380,6 +385,8 @@ If an IDTP, provider, method key, method version, authoritative source integrati
 4. publish refreshed signed status objects for affected attestations;
 5. queue re-verification or reissuance where appropriate; and
 6. preserve audit evidence for the incident decision.
+
+These actions MUST preserve the attestation status lifecycle in [I-D.noss-jeftovic-groundmark-attestation]. Suspension is reversible when re-verification resolves the incident. Revocation is terminal for an `attestation_id`; any later acceptable assertion requires a newly issued attestation with a new identifier. Refreshing a status object increments its sequence but MUST NOT change a terminal state.
 
 A relying party MAY reject otherwise valid attestations when a disclosed method dependency, IDTP, method version, or key is unauthorized, suspended, vulnerable, expired, or outside jurisdictional policy.
 
@@ -431,6 +438,8 @@ The authors thank the Groundmark reviewers who separated issuer accountability, 
 
 - Initial focused method-provenance profile for IDSP and IDTP functions.
 - Defined execution modes, public method execution records, private signed method receipts, role-separated keys, role-scoped trust policy, dependency incident propagation, and privacy boundaries.
+- Aligned the execution-object shape with the attestation draft, defined the provider object and receipt digest precisely, and clarified purpose-scoped DNS key publication.
+- Clarified authoritative-source execution, method-key attribution, and terminal-revocation behavior during dependency incidents.
 
 ## Authors' Addresses
 
