@@ -3,8 +3,8 @@
 **Internet-Draft:** `draft-noss-jeftovic-groundmark-attestation-01`
 **Stream:** Independent Submission
 **Intended status:** Experimental
-**Expires:** 23 January 2027
-**Date:** 22 July 2026
+**Expires:** 6 March 2027
+**Date:** 2 September 2026
 
 **Authors:**
 - E. Noss — Groundmark
@@ -26,7 +26,7 @@ Internet-Drafts are working documents of the Internet Engineering Task Force (IE
 
 Internet-Drafts are draft documents valid for a maximum of six months and may be updated, replaced, or obsoleted by other documents at any time. It is inappropriate to use Internet-Drafts as reference material or to cite them other than as "work in progress."
 
-This Internet-Draft will expire on 23 January 2027.
+This Internet-Draft will expire on 6 March 2027.
 
 ## Copyright Notice
 
@@ -162,7 +162,7 @@ The terminology of the core protocol [I-D.noss-jeftovic-groundmark-core] applies
 
 **Identity Service Provider (IDSP)** — A trusted third party that performs verification of a claim and publishes a signed attestation. Defined more fully in Section 3.
 
-**Issuer Authorization** — A relying-party policy decision that an IDSP, signing key, framework, jurisdiction, method profile, claim type, and maximum level are authorized for a specific use.
+**Issuer Authorization** — A relying-party policy decision that an IDSP, purpose-scoped signing key, framework, jurisdiction, method profile, claim type, and maximum level are authorized for a specific use.
 
 **Level** — An integer from 0 to 3 indicating the strength of verification associated with a Groundmark attestation, as defined in Section 4.
 
@@ -172,6 +172,8 @@ The terminology of the core protocol [I-D.noss-jeftovic-groundmark-core] applies
 
 **Status Object** — An independently signed JSON object that states the current status of an immutable attestation and binds that status to the attestation's identifier and digest.
 
+**Pending Publication** — The pre-active state of an issued attestation whose `_agentclaim` reference has not yet been observed in DNS. A pending attestation is not valid for relying-party policy satisfaction.
+
 **Relying Party** — As in the core protocol. In this document's context, a relying party evaluating attestations decides which IDSPs it trusts and for what purposes, and which attestation levels and claim types it requires.
 
 ## 3. The Identity Service Provider Role
@@ -180,8 +182,8 @@ An IDSP under Groundmark is an entity that:
 
 1. Performs verification of a specific claim about an operator or agent, using methods the IDSP discloses in each attestation it issues.
 2. Publishes attestations as signed JSON documents over HTTPS, at the URLs referenced by `_agentclaim` `ref=` fields.
-3. Publishes its own signing public key in DNS using the `_agentid` convention defined by the core protocol, under a DNSSEC-signed zone.
-4. Operates a revocation mechanism per Section 8.
+3. Publishes separate attestation-signing and status-signing public keys in DNS using the purpose-scoped `_agentid` convention defined by the core protocol, under a DNSSEC-signed zone.
+4. Operates a signed status mechanism per Section 8.
 
 Any person, organization, or institution with appropriate competence may operate as an IDSP for claims within its competence. No central designation is required. Recognition of an IDSP by a relying party, or by a regulatory framework whose requirements a relying party is attempting to satisfy, is independent of this specification.
 
@@ -199,13 +201,17 @@ This document does not specify how a relying party comes to trust a specific IDS
 - Recognition by a regulator or industry body whose rules the relying party operates under.
 - Inclusion in a curated list maintained by a community or trust framework operator.
 
-These are out of scope for this specification. What this specification provides is the substrate that makes any of these evaluation modes possible: every Groundmark attestation includes the IDSP's identity, the methods it performed, and the cryptographic material needed to verify the IDSP's signature. A cryptographically valid signature is necessary but not sufficient for policy acceptance: a relying party MUST separately authorize the issuer for the claim, framework, jurisdiction, method profile, and level required by the transaction.
+These are out of scope for this specification. What this specification provides is the substrate that makes any of these evaluation modes possible: every Groundmark attestation includes the IDSP's identity, the methods it performed, and the cryptographic material needed to verify the IDSP's signature. A cryptographically valid signature is necessary but not sufficient for policy acceptance: a relying party MUST separately authorize the issuer for the claim, framework, jurisdiction, method profile, level, and key purpose required by the transaction.
+
+An IDSP MUST use different private keys for `attestation-signing` and `status-signing`. Each public key MUST be published at `_agentid.<idsp>` with a distinct `kid=` and the corresponding `purpose=` value. A relying party MUST select an IDSP key by both identifier and purpose. A key authorized for one purpose MUST NOT satisfy another purpose.
 
 ## 4. Attestation Level Taxonomy
 
 Groundmark defines four attestation levels indicating the strength of verification associated with a claim. The level is a floor, not a ceiling: a relying party requiring Level 1 MAY accept a Level 2 or Level 3 attestation for the same claim type. A relying party requiring Level 2 MUST NOT accept a Level 1 attestation in its place.
 
 The levels do not aggregate. Three Level 2 attestations do not constitute a Level 3 attestation. Each claim stands on its own merits.
+
+Levels never substitute for claim types or method profiles. A relying party MUST authorize and require the intended `claim_type`; a numerically higher level attached to a different claim does not satisfy that requirement. A custom claim may use a level only if its claim profile and actual verification meet every baseline requirement of that level. Account or profile control alone is not Level 1 operator accountability.
 
 ### 4.1. Level 0 — Permissionless
 
@@ -222,11 +228,15 @@ A real, identifiable party stands behind the agent. Level 1 establishes that an 
 Required verification, performed by the IDSP:
 
 - **Operator existence:** the operator is a real person or organization.
-- **Operational control:** the operator demonstrably controls the agent domain using a DNSSEC-authenticated challenge or an equivalently strong domain-control method.
-- **Agent-key control:** the operator demonstrates possession of the private key corresponding to the exact `subject_key_thumbprint` bound into the attestation.
+- **Operational authorization:** for an operator-controlled agent domain, the operator demonstrates domain control using a DNSSEC-authenticated challenge or an equivalently strong method. For a provider-hosted agent domain, the IDSP verifies an authenticated provider binding that explicitly authorizes the hosted agent for the operator.
+- **Agent-key binding:** for an operator-controlled key, the operator demonstrates possession of the private key corresponding to the exact `subject_key_thumbprint`. For a provider-custodied key, the custodian demonstrates possession and the IDSP verifies an explicit authorization binding the operator, hosted agent domain, and exact key.
 - **Acceptance of terms:** the operator has agreed to the IDSP's accountability framework.
 
 Acceptable methods are at the IDSP's discretion subject to the method-disclosure obligation and relying-party issuer authorization. Typical methods include business registration lookup, DNSSEC domain challenge, agent-key proof of possession, terms acceptance, strong administrator authentication, or credential binding to a verified account. Email confirmation alone is not sufficient for Level 1 issuance.
+
+An IDSP MAY verify and retain operator attributes in a private account before an agent exists. That account state is not a Groundmark attestation. The IDSP MUST NOT issue an `operator-verified` or other Level 1 attestation until it has bound the selected attributes to a specific agent domain and exact agent key using the direct-control or provider-hosted process above.
+
+For a provider-hosted agent, `method_disclosure.executions` MUST identify the hosted-agent binding and key-custody verification methods, including the custodian or hosting-provider domain as a material provider or performer. A relying party can then distinguish direct operator key control from provider custody without exposing the operator's private account evidence.
 
 A relying party operating at Level 1 CAN conclude that an identifiable operator is accountable for the agent's actions, and that the operator accepted terms establishing accountability. It CANNOT conclude that the operator is compliant with any specific regulation or legal standard.
 
@@ -477,7 +487,7 @@ The attestation is a flat JSON [RFC8259] object using snake_case field names. Th
 - **method_disclosure** (REQUIRED, object) — Structured description of the verification the IDSP performed. See Section 6.5.
 - **endpoint_url** (REQUIRED, string) — The canonical HTTPS URL at which this attestation is served. MUST match the `ref=` URL in the corresponding `_agentclaim` record. Bound into the signed payload to prevent portability attacks (see Section 9.1).
 - **status_url** (REQUIRED, string) — HTTPS URL for the independently signed status object described in Section 8. Replaces `revocation_endpoint` in schema version 1.1.
-- **signing_key_id** (REQUIRED, string) — Identifier of the IDSP signing key used. Matches the `kid=` value of the corresponding `_agentid` record at the IDSP's domain.
+- **signing_key_id** (REQUIRED, string) — Identifier of the IDSP attestation-signing key used. Matches the `kid=` value of the corresponding `_agentid` record at the IDSP's domain; that record MUST declare `purpose=attestation-signing`.
 - **signature** (REQUIRED, string) — Base64url-encoded [RFC4648] Ed25519 signature over the canonical payload. See Section 7.
 - **jurisdiction** (OPTIONAL, string) — Applicable jurisdiction. REQUIRED at Level 3 when the framework is jurisdictionally scoped.
 - **framework** (OPTIONAL, string) — Named regulatory or trust framework. REQUIRED at Level 3.
@@ -505,13 +515,18 @@ Each entry in `executions` MUST include:
 
 - **method_id** (REQUIRED, string) — A method identifier drawn from the Groundmark Method Identifier registry established by this document (Section 13) or from an explicitly installed extension profile.
 - **method_version** (REQUIRED, string) — Version of the method profile, technology, or authoritative-source integration.
-- **execution_mode** (REQUIRED, string) — A machine-readable execution mode. This document defines `idsp-direct`, `idsp-operated-technology`, and `authoritative-source-query`, and reserves `idtp-managed-service` for the companion method-provenance specification.
-- **performed_at** (OPTIONAL, string) — Time at which the method execution was completed, formatted per [RFC3339].
-- **provider** (OPTIONAL, string) — Domain name of a material method provider, authoritative source, or technology provider, when disclosure is required by the method profile.
-- **provider_version** (OPTIONAL, string) — Version of the material technology provider or authoritative-source integration when that version is distinct from `method_version` and material to relying-party policy.
+- **execution_mode** (REQUIRED, string) — A machine-readable execution mode. This document defines `idsp-direct`, `idsp-operated-technology`, and `authoritative-source-query`, and reserves `idtp-managed-service` for the companion method-provenance specification. `authoritative-source-query` means the IDSP directly controlled the query; an IDTP-controlled query returning a managed result uses `idtp-managed-service` and also populates the source fields.
+- **performed_by** (REQUIRED, object) — Function that performed or controlled execution. The object contains `role` (REQUIRED, string), `domain` (REQUIRED, DNS name), and optional purpose-specific `key_id` and `key_thumbprint` strings.
+- **performed_at** (REQUIRED, string) — Time at which the method execution was completed, formatted per [RFC3339].
+- **valid_until** (OPTIONAL, string) — Time after which the execution can no longer support new issuance without refresh, formatted per [RFC3339].
 - **evidence_class** (OPTIONAL, array of strings) — Evidence categories examined, such as `"domain-control"`, `"cryptographic-key-control"`, `"organization-record"`, `"government-issued-id"`, or `"biometric-liveness"`.
+- **source_class** (OPTIONAL, string) — Class of authoritative source queried, when applicable.
+- **source_domain** (OPTIONAL, string) — Domain of the authoritative source or material data provider, when required by the method profile.
+- **source_observed_at** (OPTIONAL, string) — Time at which source data was observed, formatted per [RFC3339].
+- **provider** (OPTIONAL, object) — Material technology or service provider when different from `performed_by`. The object contains `domain` (REQUIRED, DNS name) and optional `service` and `version` strings.
+- **receipt_digest** (OPTIONAL, string) — Digest of a private signed Method Receipt. This field is REQUIRED for `idtp-managed-service` under the companion method-provenance specification.
 
-The IDSP remains accountable to the relying party for the attestation it signs. Structured method provenance makes material method dependencies visible to policy; it does not transfer the IDSP's issuer accountability to a technology provider or subcontractor. The full IDSP/IDTP managed-receipt profile is outside the scope of this document.
+For `idsp-operated-technology`, `performed_by.role` is `idsp` and `provider` identifies the material provider. For `authoritative-source-query`, the `source_class`, `source_domain`, and `source_observed_at` fields identify the source and freshness as required by the method profile. The IDSP remains accountable to the relying party for the attestation it signs. Structured method provenance makes material dependencies visible to policy; it does not transfer the IDSP's issuer accountability to a technology provider or subcontractor. The full IDSP/IDTP managed-receipt profile is specified in [I-D.noss-jeftovic-groundmark-idtp-method-provenance].
 
 ### 6.6. Worked Example
 
@@ -546,6 +561,10 @@ The following non-normative example illustrates the JSON payload served by an ID
         "method_id": "dnssec-domain-challenge",
         "method_version": "1.0",
         "execution_mode": "idsp-direct",
+        "performed_by": {
+          "role": "idsp",
+          "domain": "verify.example.net"
+        },
         "performed_at": "2026-05-19T11:48:00Z",
         "evidence_class": [
           "domain-control"
@@ -555,6 +574,10 @@ The following non-normative example illustrates the JSON payload served by an ID
         "method_id": "agent-key-proof-of-possession",
         "method_version": "1.0",
         "execution_mode": "idsp-direct",
+        "performed_by": {
+          "role": "idsp",
+          "domain": "verify.example.net"
+        },
         "performed_at": "2026-05-19T11:52:00Z",
         "evidence_class": [
           "cryptographic-key-control"
@@ -564,8 +587,14 @@ The following non-normative example illustrates the JSON payload served by an ID
         "method_id": "organization-existence-check",
         "method_version": "1.0",
         "execution_mode": "authoritative-source-query",
+        "performed_by": {
+          "role": "idsp",
+          "domain": "verify.example.net"
+        },
         "performed_at": "2026-05-19T11:55:00Z",
-        "provider": "registry.example.gov",
+        "source_class": "corporate-registry",
+        "source_domain": "registry.example.gov",
+        "source_observed_at": "2026-05-19T11:55:00Z",
         "evidence_class": [
           "organization-record"
         ]
@@ -574,6 +603,10 @@ The following non-normative example illustrates the JSON payload served by an ID
         "method_id": "terms-accepted",
         "method_version": "1.0",
         "execution_mode": "idsp-direct",
+        "performed_by": {
+          "role": "idsp",
+          "domain": "verify.example.net"
+        },
         "performed_at": "2026-05-19T11:57:00Z"
       }
     ],
@@ -588,7 +621,7 @@ The following non-normative example illustrates the JSON payload served by an ID
 }
 ```
 
-The IDSP's signing public key is published at `_agentid.verify.example.net`. The relying party retrieves it via a DNSSEC-validating resolver, selects the record with `kid=idsp-2026-01`, reconstructs the canonical payload using [RFC8785] on the strict parsed object with the `signature` field removed, and verifies the Ed25519 signature against the IDSP's public key. The relying party then verifies all mandatory bindings in Section 7.1, including that `subject_key_thumbprint` matches the exact key that verified the presented Groundmark request.
+The IDSP's signing public keys are published at `_agentid.verify.example.net`. The relying party retrieves them via a DNSSEC-validating resolver, selects the record with `kid=idsp-2026-01` and `purpose=attestation-signing`, reconstructs the canonical payload using [RFC8785] on the strict parsed object with the `signature` field removed, and verifies the Ed25519 signature against the IDSP's public key. The relying party then verifies all mandatory bindings in Section 7.1, including that `subject_key_id` and `subject_key_thumbprint` match the exact key that verified the presented Groundmark request.
 
 ## 7. Signature Construction and Verification
 
@@ -596,7 +629,7 @@ Attestation signatures use Ed25519 [RFC8032]. The signature is computed over a c
 
 The canonical serialization is JSON Canonicalization Scheme [RFC8785] applied to the strict parsed attestation payload object, omitting the top-level `signature` key. JCS provides a deterministic byte sequence regardless of input ordering or whitespace, removing a class of canonicalization bugs.
 
-The IDSP's public key is published in DNS using the `_agentid.<idsp-domain>` convention defined by the core protocol. IDSPs MUST sign their zones with DNSSEC. A public key retrieved from a non-DNSSEC-signed zone MUST NOT be used for attestation verification. The `signing_key_id` field in the attestation identifies which of the IDSP's keys was used; this corresponds to the `kid=` field in the IDSP's `_agentid` record.
+The IDSP's public keys are published in DNS using the `_agentid.<idsp-domain>` convention defined by the core protocol. IDSPs MUST sign their zones with DNSSEC. A public key retrieved from a non-DNSSEC-signed zone MUST NOT be used for attestation verification. The `signing_key_id` field in the attestation identifies which of the IDSP's keys was used; this corresponds to the `kid=` field in an `_agentid` record whose `purpose=` is `attestation-signing`.
 
 ### 7.1. Verification Context and Mandatory Bindings
 
@@ -604,15 +637,16 @@ Attestation verification is performed in the context of a Groundmark request and
 
 ```text
 payload.subject == evaluated agent domain
+payload.subject_key_id == actual request-signing-key kid, or empty when omitted
 payload.subject_key_thumbprint == actual request-signing-key thumbprint
 payload.claim_type == DNS _agentclaim claim=
 payload.idsp == DNS _agentclaim idsp=
 payload.endpoint_url == DNS/presentation ref=
 ```
 
-All FQDN comparisons use lowercase IDNA A-label form with no trailing root label. URL comparisons use the exact canonical URL string from the DNS or presentation `ref=` value after syntax validation; implementations MUST NOT normalize one URL into another in a way that changes octets, authority, path, query, or percent-encoding. The request-signing-key thumbprint is computed over the selected Ed25519 `_agentid` key as specified by the core protocol's Agent Key Thumbprint definition.
+All FQDN comparisons use lowercase IDNA A-label form with no trailing root label. URL comparisons use the exact canonical URL string from the DNS or presentation `ref=` value after syntax validation; implementations MUST NOT normalize one URL into another in a way that changes octets, authority, path, query, or percent-encoding. The request-signing-key identifier and thumbprint are taken from the exact Ed25519 `_agentid` key that verified the request. A `subject_key_id` mismatch is a binding failure even when the thumbprint matches.
 
-The DNS `claim=` and `idsp=` values, the signed presentation claim type if present, and the signed payload fields MUST all agree before policy evaluation. A mismatch is a cryptographic binding failure, not merely a policy miss. Implementations SHOULD expose distinct diagnostics such as `wrong_subject`, `subject_key_mismatch`, `attestation_claim_type_mismatch`, `attestation_idsp_mismatch`, and `endpoint_mismatch`.
+The DNS `claim=` and `idsp=` values, the signed presentation claim type if present, and the signed payload fields MUST all agree before policy evaluation. A mismatch is a cryptographic binding failure, not merely a policy miss. Implementations SHOULD expose distinct diagnostics such as `wrong_subject`, `subject_key_id_mismatch`, `subject_key_mismatch`, `attestation_claim_type_mismatch`, `attestation_idsp_mismatch`, and `endpoint_mismatch`.
 
 ### 7.2. Verification Steps
 
@@ -623,7 +657,7 @@ A relying party verifying an attestation payload MUST:
 3. Parse JSON with duplicate-member detection and validate the I-JSON profile in Section 6.1.
 4. Confirm that `schema_version` is understood and validate the understood schema.
 5. Validate the `claim_value` and `claim_subject` against the claim profile for `claim_type`. Unknown claim types MAY continue through cryptographic inspection, but MUST NOT satisfy policy without an installed claim profile.
-6. Retrieve the IDSP's `_agentid` record(s) from DNS using a DNSSEC-validating resolver profile conforming to the core protocol. Select the record matching `signing_key_id`. Reject if no such record exists, if DNSSEC validation fails, or if the IDSP zone is unsigned.
+6. Retrieve the IDSP's `_agentid` record(s) from DNS using a DNSSEC-validating resolver profile conforming to the core protocol. Select the record matching `signing_key_id` and `purpose=attestation-signing`. Reject if no such purpose-matching record exists, if DNSSEC validation fails, or if the IDSP zone is unsigned.
 7. Compute the canonical serialization per [RFC8785] on the same strict parsed payload with the top-level `signature` field removed.
 8. Verify the Ed25519 signature using the IDSP's public key.
 9. Verify the mandatory bindings in Section 7.1.
@@ -636,11 +670,11 @@ A cryptographically valid attestation from an unauthorized issuer MUST NOT satis
 
 ## 8. Status and Revocation
 
-Two independent revocation mechanisms operate at the attestation layer, in addition to DNS-level revocation provided by the core protocol (deletion of the `_agentclaim` record).
+DNS publication withdrawal and authoritative attestation status are complementary but distinct controls.
 
-**DNS-layer revocation (under the core protocol)** — Removal of the `_agentclaim` record invalidates the claim within the record's TTL.
+**DNS publication withdrawal (under the core protocol)** — Removal of the `_agentclaim` record withdraws the operator's current publication of that claim reference after the DNS TTL. It does not alter the attestation, produce a signed lifecycle statement, or prove IDSP revocation.
 
-**Status-layer revocation** — The IDSP changes the signed status object at the attestation's `status_url`. The current `_agentid` key publication remains usable; only the specific attestation status changes. This is appropriate when an operator's standing changes with respect to a single claim without affecting unrelated claims or request authentication.
+**Status-layer revocation** — The IDSP changes the signed status object at the attestation's `status_url`. The current `_agentid` key publication remains usable; only the specific attestation status changes. This is the authoritative revocation mechanism for an issued attestation.
 
 ### 8.1. Signed Status Object
 
@@ -668,19 +702,29 @@ Fields:
 - **schema_version** (REQUIRED, string) — Status object schema version. The current value is `"1.0"`.
 - **attestation_id** (REQUIRED, string) — MUST equal the parent attestation's `attestation_id`.
 - **attestation_digest** (REQUIRED, string) — SHA-256 digest of the complete immutable canonical parent attestation, including its `signature`, encoded as `sha-256:<base64url>`.
-- **status** (REQUIRED, string) — One of `active`, `revoked`, `suspended`, `superseded`, or `expired`.
-- **sequence** (REQUIRED, integer) — Monotonically increasing sequence for every status change or refresh.
+- **status** (REQUIRED, string) — One of `pending_publication`, `active`, `revoked`, `suspended`, `superseded`, or `expired`. `pending_publication` means the attestation has been issued but the IDSP has not yet observed its corresponding DNS `_agentclaim` reference; it MUST NOT satisfy relying-party policy.
+- **sequence** (REQUIRED, positive integer) — Monotonically increasing sequence for every status change or refresh. The first status object for an attestation uses sequence 1. Rotation of the status-signing key MUST NOT reset the sequence.
 - **this_update** (REQUIRED, string) — Time at which this status object was issued, formatted per [RFC3339].
 - **next_update** (REQUIRED, string) — Time after which this status object is no longer fresh, formatted per [RFC3339].
-- **reason_code** (OPTIONAL, string or null) — Machine-readable reason for non-active status.
+- **reason_code** (REQUIRED, string or null) — Machine-readable reason for non-active status. The value SHOULD be non-null for `revoked`, `suspended`, `superseded`, or `expired`, and SHOULD be null for `active` or `pending_publication`.
 - **signing_key_id** (REQUIRED, string) — Identifier of the IDSP status-signing key.
 - **signature** (REQUIRED, string) — Base64url-encoded [RFC4648] Ed25519 signature over the canonical status object with the top-level `signature` field removed.
 
-The status-signing public key is discovered using the same DNSSEC-authenticated `_agentid.<idsp>` convention as attestation signing keys. Relying-party issuer policy MUST authorize the selected key for the status-signing purpose.
+The status-signing public key is discovered using the same DNSSEC-authenticated `_agentid.<idsp>` convention as attestation signing keys. The selected record MUST match `signing_key_id` and declare `purpose=status-signing`. The status-signing key MUST be different from the attestation-signing key. Relying-party issuer policy MUST authorize the selected key for the status-signing purpose.
 
 The status endpoint MUST NOT require authentication from the relying party. It is public and cacheable. CDN caching, connection limits, global volumetric protection, and abuse controls are permitted, but the endpoint MUST NOT behave differently per relying party or become an authorization oracle.
 
 IDSPs SHOULD issue short-lived status freshness windows. A current cached status object is sufficient; a live request on every transaction is not required. Implementation profiles MAY define tighter operational limits; a PoC profile can use a five-minute default and a fifteen-minute hard maximum.
+
+Status transitions for one `attestation_id` MUST obey the following lifecycle:
+
+- `pending_publication` MAY transition to `active`, `revoked`, or `expired`.
+- `active` MAY transition to `suspended`, `revoked`, `superseded`, or `expired`.
+- `suspended` MAY transition back to `active`, or to `revoked` or `expired`.
+- `revoked` is terminal. An IDSP MUST NOT reinstate the same `attestation_id`; it MUST issue a new attestation with a new identifier.
+- `superseded` and `expired` are terminal for the same `attestation_id`.
+
+An IDSP MAY refresh a status without changing its value, but every refresh MUST increment `sequence` and update `this_update` and `next_update`. In particular, a revoked status may be refreshed for availability while remaining revoked; refresh does not constitute reinstatement.
 
 ### 8.2. Status Verification and Fail Modes
 
@@ -691,10 +735,10 @@ A relying party MUST reject the status object if any of the following is true:
 - the status schema version is not understood;
 - strict JSON/I-JSON parsing or JCS canonicalization fails;
 - the status signature is invalid;
-- the status-signing key is not authorized for status signing by the relying party's issuer policy;
+- no DNSSEC-authenticated key matching both `signing_key_id` and `purpose=status-signing` is available, or the key is not authorized for status signing by the relying party's issuer policy;
 - `attestation_id` differs from the parent attestation;
 - `attestation_digest` differs from the digest of the complete immutable canonical parent attestation, including its signature;
-- `sequence` is less than the highest accepted sequence for this attestation from the same status-signing key, or otherwise violates the verifier's replay and cache policy;
+- `sequence` is less than the highest accepted sequence for this attestation across all authorized status-signing keys, or otherwise violates the verifier's replay and cache policy;
 - `this_update` is in the future beyond local clock-skew policy;
 - `next_update` is in the past;
 - `status` is not `active`; or
@@ -741,9 +785,9 @@ For high-assurance transactions requiring multiple claims, relying parties SHOUL
 
 ### 9.4. IDSP Compromise
 
-Compromise of an IDSP's signing key permits an attacker to issue fraudulent attestations until the corresponding `_agentid` record at the IDSP's domain is removed and caches expire. IDSPs MUST treat their signing keys with the same operational discipline as certificate-authority signing keys, including hardware key storage and audit-grade access controls. An IDSP SHOULD prepare for emergency key rotation per the procedure defined in the core protocol, and SHOULD pre-announce key rotation policy in its public practices statement.
+Compromise of an IDSP's attestation-signing key permits an attacker to issue fraudulent attestations until the corresponding `_agentid` record at the IDSP's domain is withdrawn and caches expire. Compromise of a status-signing key permits an attacker to forge lifecycle statements for attestations whose status relies on that key, but the key cannot create a valid parent attestation. Purpose separation limits these blast radii only when verifiers enforce it.
 
-A compromised IDSP signing key invalidates all attestations signed under that key. There is no fine-grained recovery: relying parties detecting an IDSP key compromise SHOULD treat all attestations under that key as unverifiable until the key is rotated and the affected attestations are re-issued.
+IDSPs MUST protect both key classes with hardware-backed storage where available, audit-grade access controls, and operational controls appropriate to their different signing frequencies. An IDSP SHOULD prepare for emergency rotation under the core protocol and SHOULD publish its rotation policy in its practices statement. Relying parties detecting an attestation-signing-key compromise SHOULD treat all attestations signed under that key as unverifiable until the key is rotated and affected attestations are reissued. A status-signing-key compromise requires rotation of the status key and fresh status objects under the new authorized key; it does not authorize reinstatement of an attestation already known to be revoked.
 
 ### 9.5. Denial of Service via Status Endpoint
 
@@ -822,11 +866,12 @@ Schema version 1.1 is the first key-bound Groundmark attestation schema. IDSPs i
 Migrating from schema version 1.0 to 1.1 requires:
 
 - adding immutable `attestation_id`;
-- adding `subject_key_id` and `subject_key_thumbprint`, bound to the exact agent request-signing key;
+- adding `subject_key_id` and `subject_key_thumbprint`, both bound to the exact agent request-signing key;
 - adding machine-readable `claim_subject`;
 - replacing `operator_display_name` with `operator_asserted_display_name` where a public display label is needed;
 - replacing `revocation_endpoint` and `short_lived_token` with `status_url` and the independently signed status object in Section 8;
 - replacing method arrays alone with the structured `method_disclosure.profile`, `profile_version`, and `executions` fields;
+- publishing distinct IDSP keys with `purpose=attestation-signing` and `purpose=status-signing`;
 - ensuring DNS `claim=`, DNS `idsp=`, presentation `ref=`, and signed payload fields agree; and
 - configuring relying-party issuer authorization for IDSP domain, signing key, claim type, framework, jurisdiction, method profile, and maximum level.
 
@@ -874,6 +919,7 @@ The initial registry contents are reserved for community development and will be
 ### 14.1. Normative References
 
 - **[I-D.noss-jeftovic-groundmark-core]** — Noss, E. and M. Jeftovic, "DNS-Anchored Identity Discovery for Autonomous Agents", Work in Progress, Internet-Draft, draft-noss-jeftovic-groundmark-core-01, 2026, <https://datatracker.ietf.org/doc/html/draft-noss-jeftovic-groundmark-core-01>.
+- **[I-D.noss-jeftovic-groundmark-idtp-method-provenance]** — Noss, E. and M. Jeftovic, "Groundmark IDSP/IDTP Method Provenance Profile", Work in Progress, Internet-Draft, draft-noss-jeftovic-groundmark-idtp-method-provenance-00, 2026.
 - **[RFC2119]** — Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997, <https://www.rfc-editor.org/rfc/rfc2119>.
 - **[RFC3339]** — Klyne, G. and C. Newman, "Date and Time on the Internet: Timestamps", RFC 3339, July 2002, <https://www.rfc-editor.org/rfc/rfc3339>.
 - **[RFC4648]** — Josefsson, S., "The Base16, Base32, and Base64 Data Encodings", RFC 4648, October 2006, <https://www.rfc-editor.org/rfc/rfc4648>.
@@ -901,8 +947,11 @@ The authors thank Doc Searls for substantive review of earlier drafts, the late 
 ### -01
 
 - Defined schema version 1.1 with immutable attestation IDs, claim subjects, exact request-key thumbprint binding, and status URLs.
-- Added all five mandatory attestation bindings: subject, request-signing key thumbprint, DNS claim, DNS IDSP, and endpoint/ref.
+- Added mandatory attestation bindings for subject, request-signing key identifier and thumbprint, DNS claim, DNS IDSP, and endpoint/ref.
 - Replaced mutable `short_lived_token` and `revocation_endpoint` semantics with independently signed, cacheable status objects that fail closed by default after freshness expiry.
+- Defined purpose-separated IDSP attestation and status keys, the `pending_publication` state, terminal revocation, reversible suspension, and monotonic status refresh.
+- Clarified private pre-agent operator verification, direct and provider-hosted binding, and the requirement that custom Level 1 claims meet the Level 1 accountability baseline.
+- Aligned the method-execution object with the IDSP/IDTP method-provenance profile.
 - Required strict UTF-8/I-JSON parsing, duplicate-member rejection, and one parse tree for schema, semantics, and JCS verification.
 - Added issuer authorization requirements so valid signatures do not automatically satisfy relying-party policy.
 - Renamed display-name semantics to operator-asserted display name and added `brand-authorized` as a separate claim type.
