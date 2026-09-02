@@ -3,8 +3,8 @@
 **Internet-Draft:** `draft-noss-jeftovic-groundmark-core-01`
 **Stream:** Independent Submission
 **Intended status:** Experimental
-**Expires:** 23 January 2027
-**Date:** 22 July 2026
+**Expires:** 6 March 2027
+**Date:** 2 September 2026
 
 **Authors:**
 - E. Noss — Groundmark
@@ -26,7 +26,7 @@ Internet-Drafts are working documents of the Internet Engineering Task Force (IE
 
 Internet-Drafts are draft documents valid for a maximum of six months and may be updated, replaced, or obsoleted by other documents at any time. It is inappropriate to use Internet-Drafts as reference material or to cite them other than as "work in progress."
 
-This Internet-Draft will expire on 23 January 2027.
+This Internet-Draft will expire on 6 March 2027.
 
 ## Copyright Notice
 
@@ -57,7 +57,7 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
    - 5.4. Required Signature Parameters
    - 5.5. Request Profiles
    - 5.6. Verification Steps
-6. Revocation
+6. DNS Publication Withdrawal and Key Rotation
    - 6.1. Key Rotation
    - 6.2. Identity Reset
 7. Security Considerations
@@ -140,7 +140,9 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 **Operator** — Any person or organization that deploys and controls an autonomous agent. The operator is the principal whose accountability is at issue in the attestation framework defined by the companion document.
 
-**Agent** — An autonomous software instance acting on behalf of an operator. An agent holds a cryptographic key pair; its public key is published in DNS under its agent domain.
+**Agent** — An autonomous software instance acting on behalf of an operator. An agent uses a cryptographic key pair held by its runtime or by a key custodian; the public key is published in DNS under the agent domain.
+
+**Key Custodian** — An entity that operates an agent private key on behalf of an operator. A key custodian may be the operator, the agent runtime, or a hosting provider. Core verification establishes control of the selected private key; it does not by itself establish who authorized a custodian to act for the operator.
 
 **Agent Domain** — A fully qualified domain name (FQDN) that serves as the agent's discovery anchor in DNS. Typically a subdomain under the operator's registered domain (e.g., `purchasing.acmecorp.example`) but MAY be a second-level domain.
 
@@ -158,12 +160,14 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 A Groundmark-enabled HTTP request proceeds as follows.
 
-1. The operator publishes an `_agentid` TXT record at the agent domain, containing the agent's signing public key, and OPTIONALLY one or more `_agentclaim` TXT records referencing externally hosted attestations. All such records MUST be published in a DNSSEC-signed zone.
-2. The agent signs each HTTP request using HTTP Message Signatures [RFC9421] as profiled in Section 5. The signature uses the agent's private key and identifies the corresponding public key through a keyid parameter that resolves to the agent domain.
+1. The operator publishes an `_agentid` TXT record at the agent domain, containing the agent's request-signing public key, and OPTIONALLY one or more `_agentclaim` TXT records referencing externally hosted attestations. All such records MUST be published in a DNSSEC-signed zone.
+2. The agent, or a key custodian operating the agent on the operator's behalf, signs each HTTP request using HTTP Message Signatures [RFC9421] as profiled in Section 5. The signature uses the agent's private key and identifies the corresponding public key through a keyid parameter that resolves to the agent domain.
 3. The relying party retrieves the `_agentid` TXT record for the agent domain using a DNSSEC-validating resolver and verifies the request signature against the selected public key. A successful verification establishes that the request was signed by the private key corresponding to the DNSSEC-authenticated key currently published for the agent domain.
 4. If the relying party's policy requires attestations beyond what is established by signature verification alone, it retrieves `_agentclaim` records for the agent domain, fetches the referenced attestations, and evaluates them according to the framework specified in the companion document.
 
 DNS in this design is a discovery layer. It points to where keys and attestations are found; it does not itself host claim content. This mirrors the role DNS already plays for email authentication mechanisms such as DKIM [RFC6376] and DMARC [RFC7489].
+
+Retrieving an agent's `_agentid` and `_agentclaim` records without verifying a request signature does not authenticate a caller and does not establish current control of the published private key. A protocol that exchanges a Groundmark verification result for an OAuth token or another session credential MUST first authenticate a signature made by the selected agent key. The lifetime and scope of the resulting credential are properties of that higher-layer protocol.
 
 ### 3.1. Worked Example
 
@@ -222,10 +226,11 @@ The `_agentid` TXT record is published at:
 
 ```dns
 _agentid.<agent-domain>. IN TXT
-  "v=gm1; k=ed25519; p=<base64url-public-key>"
+  "v=gm1; k=ed25519; purpose=request-signing;
+   kid=<key-id>; p=<base64url-public-key>"
 ```
 
-The record declares the agent's signing public key and algorithm. It is the root of cryptographic verification for the agent identity.
+At an agent domain, the record declares the agent's request-signing public key and algorithm and is the root of cryptographic verification for that agent identity. Companion Groundmark specifications MAY use the same `_agentid` label at service domains, such as an IDSP or IDTP domain, to publish purpose-scoped service keys. Such publication does not turn the service domain into an agent identity, and a service key MUST carry an explicit non-default `purpose=` value.
 
 #### 4.1.1. ABNF Grammar
 
@@ -233,11 +238,13 @@ The record declares the agent's signing public key and algorithm. It is the root
 agentid-record  = version 1*( ";" SP agentid-param )
 version         = "v=gm1"
 agentid-param   = key-alg-param / pubkey-param / keyid-param /
-                  ext-param
+                  purpose-param / ext-param
 key-alg-param   = "k=" key-alg
 key-alg         = "ed25519" / x-token
 pubkey-param    = "p=" base64url-value
 keyid-param     = "kid=" 1*( ALPHA / DIGIT / "-" / "_" / "." )
+purpose-param   = "purpose=" key-purpose
+key-purpose     = 1*( ALPHA / DIGIT / "-" )
 ext-param       = param-name "=" param-value
 param-name      = 1*( ALPHA / DIGIT / "-" )
 param-value     = *( %x21-3A / %x3C-7E )
@@ -246,7 +253,9 @@ base64url-value = 1*( ALPHA / DIGIT / "-" / "_" / "=" )
 x-token         = "x-" 1*( ALPHA / DIGIT / "-" )
 ```
 
-The OPTIONAL `kid=` parameter allows an operator to publish an explicit key identifier matching the keyid parameter used in the request signature, which supports key rotation by deploying multiple `_agentid` records during transition (see Section 6.1).
+The OPTIONAL `kid=` parameter identifies a key within an `_agentid` RRset. It matches the fragment of the `keyid` parameter used in a request signature and also permits companion protocols to select service keys by identifier. It is REQUIRED whenever more than one `_agentid` record is present at a label.
+
+The OPTIONAL `purpose=` parameter declares the protocol role for which a key is published. This document defines `request-signing`. Companion Groundmark specifications define additional purposes, including `attestation-signing`, `status-signing`, and `method-receipt-signing`. Absence of `purpose=` is equivalent to `purpose=request-signing` for compatibility with version `gm1`; an omitted purpose MUST NOT authorize a key for any other use.
 
 #### 4.1.2. Processing Requirements
 
@@ -254,14 +263,16 @@ The `k=` (key algorithm) and `p=` (public key) parameters MUST be present. The v
 
 This document defines `ed25519` as the only mandatory-to-implement algorithm. The `p=` field MUST contain the Base64url-encoded [RFC4648] raw public key bytes for the specified algorithm (32 bytes for Ed25519). Support for additional algorithms MAY be added by future documents updating this specification.
 
-An operator publishing a single signing key MUST publish exactly one `_agentid` record. An operator may publish multiple `_agentid` records only as part of a key rotation procedure (see Section 6.1); in that case, every published record MUST carry a distinct `kid=` value, and request signatures MUST identify the intended key by keyid.
+A publisher exposing a single request-signing key MAY publish one `_agentid` record without `kid=`. Multiple `_agentid` records MAY be published for key rotation or for purpose-separated keys used by companion Groundmark protocols. When more than one record is present, every record MUST carry a `kid=` value and every `kid=` value in the RRset MUST be distinct, even when the records declare different purposes.
+
+A key MUST be used only for its declared purpose. A request verifier MUST select a key whose purpose is `request-signing` or whose purpose is omitted. A record with an unrecognized purpose remains syntactically valid but MUST NOT be used unless the consuming protocol and relying-party policy explicitly authorize that purpose.
 
 A relying party MUST treat the identity as invalid, and MUST NOT proceed with signature verification against any record at the label, if any of the following conditions hold at the time of lookup:
 
 - More than one `_agentid` record is present at the label and any of them lacks a `kid=` parameter.
 - More than one `_agentid` record is present and two or more of them share the same `kid=` value.
 
-Operators SHOULD set the TTL of the `_agentid` record to 300 seconds or less to enable timely revocation. Relying parties MUST respect DNS TTL values and MUST NOT cache `_agentid` records beyond their TTL.
+Operators SHOULD set the TTL of the `_agentid` record to 300 seconds or less to enable timely withdrawal. Relying parties MUST respect DNS TTL values and MUST NOT cache `_agentid` records beyond their TTL.
 
 Relying parties MUST use a DNSSEC-validating resolver profile conforming to Section 7.1 when retrieving `_agentid` records. `insecure`, `bogus`, `indeterminate`, timeout, transport, and validation-error results are fatal to request authentication. A relying party MUST distinguish secure NODATA from validation failure for diagnostics, but either result means no usable agent identity was authenticated.
 
@@ -297,7 +308,8 @@ version           = "v=gm1"
 agentclaim-param  = claim-param / idsp-param / ref-param /
                     exp-param / val-param / ext-param
 claim-param       = "claim=" claim-type
-claim-type        = token / x-token
+claim-type        = token / x-claim-type
+x-claim-type      = "x-" 1*( ALPHA / DIGIT / "-" / "." )
 idsp-param        = "idsp=" hostname
 ref-param         = "ref=" https-url
 exp-param         = "exp=" date-value
@@ -305,7 +317,8 @@ val-param         = "val=" param-value
 ext-param         = param-name "=" param-value
 token             = 1*( ALPHA / DIGIT / "-" )
 hostname          = 1*( ALPHA / DIGIT / "." / "-" )
-https-url         = "https://" *( %x21-7E )
+https-url         = "https://" 1*( %x21-3A / %x3C-7E )
+                    ; visible ASCII excluding ";"
 date-value        = 4DIGIT "-" 2DIGIT "-" 2DIGIT
                     [ "T" 2DIGIT ":" 2DIGIT ":" 2DIGIT
                       [ "Z" /
@@ -343,8 +356,8 @@ Groundmark implementations MUST support Ed25519 [RFC8032], identified in Signatu
 
 The keyid signature parameter in Signature-Input MUST be one of the following two forms:
 
-- The agent's fully qualified domain name (FQDN), in lowercase ASCII, with no `#` suffix. In this form, the relying party retrieves the `_agentid` record at the named domain; verification proceeds if and only if exactly one record is present at the label. (Equivalently, the bare-FQDN form is only valid outside of a key-rotation window.)
-- The agent's FQDN followed by `#` and an opaque key identifier; for example, `purchasing.acmecorp.example#k2`. In this form, the relying party retrieves the `_agentid` records at the named domain and selects the record whose `kid=` parameter matches the identifier after the `#`. This form MUST be used whenever multiple `_agentid` records are concurrently published during key rotation.
+- The agent's fully qualified domain name (FQDN), in lowercase ASCII, with no `#` suffix. In this form, the relying party retrieves the `_agentid` RRset at the named domain; verification proceeds if and only if exactly one usable `request-signing` record is present and that record has no `kid=` parameter.
+- The agent's FQDN followed by `#` and an opaque key identifier; for example, `purchasing.acmecorp.example#k2`. In this form, the relying party retrieves the `_agentid` records at the named domain and selects the record whose `kid=` parameter matches the identifier after the `#` and whose purpose is `request-signing` or omitted. This form MUST be used whenever multiple `_agentid` records are concurrently published.
 
 A relying party MUST reject a signature whose keyid does not resolve to exactly one usable `_agentid` record under the rules above.
 
@@ -416,15 +429,17 @@ A relying party verifying a Groundmark request signature MUST perform the follow
 7. If the verifier's policy requires attestations beyond Level 0 request authentication, proceed to retrieve and evaluate `_agentclaim` records per [I-D.noss-jeftovic-groundmark-attestation].
 8. If the applicable request profile requires nonce enforcement, atomically consume the nonce at the final acceptance boundary. For Level 0-only verification this boundary is after Step 6. For composite verification involving attestations or application policy, this boundary is after all configured attestation, revocation, and policy checks have succeeded.
 
-## 6. Revocation
+## 6. DNS Publication Withdrawal and Key Rotation
 
-Two independent revocation mechanisms are available to operators.
+DNS publication controls what a relying party can currently discover and authorize. Removing a record is therefore a withdrawal of a publication, not an authoritative lifecycle statement about an attestation or historical identity.
 
-**DNS-layer revocation** — The operator deletes or rotates the `_agentid` record. Requests that rely on the removed Agent Identity Instance become invalid within the record's TTL. Operators performing emergency revocation SHOULD also publish an empty replacement record or otherwise serve a known-unusable value during the TTL window, and SHOULD set TTLs to 300 seconds or less in normal operation to minimize the worst-case revocation delay.
+**Agent-key withdrawal** — The operator removes an `_agentid` request-signing record. After cached copies expire, new requests cannot authenticate as the removed Agent Identity Instance. Withdrawal does not assert why the key disappeared and does not prove that the key was destroyed or historically compromised.
 
-**Claim-layer revocation** — The IDSP marks a specific attestation as revoked at the attestation endpoint or its associated revocation endpoint. The current `_agentid` key publication remains usable; only the specific claim is invalidated. The mechanics of claim-layer revocation are specified in [I-D.noss-jeftovic-groundmark-attestation].
+**Claim-reference withdrawal** — The operator removes a specific `_agentclaim` record. After cached copies expire, relying parties MUST NOT treat that DNS reference as current authorization to use the claim. Withdrawal does not change the referenced attestation's signed status and MUST NOT be represented as IDSP-issued revocation.
 
-These mechanisms are independent: deletion of an `_agentid` record revokes request authentication for the corresponding Agent Identity Instance and implicitly invalidates attestations bound to it; revocation of a single `_agentclaim` leaves the `_agentid` key publication unaffected.
+**Attestation status** — An IDSP makes authoritative lifecycle statements about an attestation through the independently signed status mechanism in [I-D.noss-jeftovic-groundmark-attestation]. Status-layer revocation is separate from DNS withdrawal and does not disable an otherwise valid agent request-signing key.
+
+These controls are complementary. An operator responding to compromise can withdraw an agent key or claim reference immediately, while an IDSP can publish a signed status change for an individual attestation. Implementations and user interfaces MUST preserve the distinction between DNS withdrawal and signed revocation.
 
 ### 6.1. Key Rotation
 
@@ -510,7 +525,7 @@ Compromise of an agent signing key permits an attacker to impersonate the agent 
 - Operators SHOULD provision the rotation procedure of Section 6.1 in advance so that emergency key replacement can be performed without delay.
 - Relying parties MUST NOT cache `_agentid` records beyond their DNS-declared TTL.
 
-This document defines no mechanism for an emergency "kill" signal distinct from DNS-level deletion. Operators requiring more aggressive revocation guarantees should consider running their authoritative nameservers with the capacity to make rapid zone updates and short TTLs.
+This document defines no emergency "kill" signal distinct from DNS publication withdrawal. Operators requiring a shorter withdrawal window should run authoritative nameservers capable of rapid zone updates and use short TTLs. Attestation revocation is provided separately by the companion specification's signed status mechanism.
 
 ### 7.7. Domain Expiry, Re-Registration, and Registrar Compromise
 
@@ -521,6 +536,8 @@ For that reason, relying parties MUST treat a key-thumbprint change without an a
 ### 7.8. Current-Key Provenance Versus Operator Assurance
 
 Successful core verification establishes control of the private key corresponding to the DNSSEC-authenticated `_agentid` key used for the request. It does not establish legal identity, registrar vetting, brand authorization, operational competence, regulatory compliance, or continuity with a previous key or registrant.
+
+When a hosting provider or another key custodian operates the private key, core verification establishes only that the custodied key signed the request. It does not prove that a particular operator authorized that request or that the custodian remains authorized. Such relationships require explicit higher-layer attestations and relying-party policy.
 
 Operator accountability and other higher-level claims are supplied, if required, by explicitly evaluated attestations under [I-D.noss-jeftovic-groundmark-attestation] and by relying-party policy. A Level 0 result MUST NOT be described as legal identity, brand verification, or registrar-verified operator accountability.
 
@@ -652,6 +669,10 @@ The authors thank Doc Searls for substantive review of earlier drafts, and the b
 
 - Clarified that core verification establishes current-key provenance, not legal identity, registrar identity proofing, brand authorization, or continuity across key changes.
 - Defined Agent Key Thumbprint, Agent Identity Instance, and Identity Reset semantics for Level 0 security decisions.
+- Added purpose-scoped `_agentid` keys, including simultaneous role-separated service keys, while preserving omitted-purpose compatibility for request-signing keys.
+- Distinguished DNS publication withdrawal from authoritative signed attestation revocation.
+- Clarified key-custodian and hosted-agent semantics, including that DNS discovery without request-signature verification does not authenticate a caller.
+- Reconciled the custom claim-type grammar with dotted registrant-domain identifiers.
 - Added request profiles distinguishing read-only requests from state-changing or higher-risk operations that require nonce enforcement.
 - Required atomic single-use nonce consumption at the final acceptance boundary, after configured cryptographic, DNSSEC, attestation, revocation, and policy checks succeed.
 - Strengthened the DNSSEC resolver profile, including authenticated resolver-channel requirements and fatal handling for insecure, bogus, indeterminate, timeout, transport, and validation-error results.
