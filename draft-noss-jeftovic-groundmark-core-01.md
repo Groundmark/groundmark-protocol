@@ -14,7 +14,7 @@
 
 ## Abstract
 
-This document defines the core of Groundmark, a protocol for DNS-anchored identity discovery and request authentication for autonomous software agents. Operators publish an agent's signing public key in a DNS TXT record under a reserved label, and optionally publish references to externally hosted attestations under a second reserved label. Agents authenticate HTTP requests using HTTP Message Signatures (RFC 9421) with a key identifier that resolves through DNS. DNSSEC is required for all Groundmark DNS lookups. Successful core verification establishes current-key provenance: control of the private key corresponding to the DNSSEC-authenticated `_agentid` key used for the request. It does not establish legal identity, registrar identity proofing, brand authorization, or continuity with an earlier key or registrant. The protocol is designed to compose with existing identity, authorization, attestation, and payment systems rather than to replace them.
+This document defines the core of Groundmark, a protocol for DNS-anchored identity discovery and request authentication for autonomous software agents. Operators publish an agent's signing public key in a DNS TXT record under a reserved label, and optionally publish references to externally hosted attestations under a second reserved label. A reference is published either in the clear, so that any relying party can discover and retrieve the attestation, or as a digest commitment that is opened only when the agent presents the attestation URL in a signed request. Agents authenticate HTTP requests using HTTP Message Signatures (RFC 9421) with a key identifier that resolves through DNS. DNSSEC is required for all Groundmark DNS lookups. Successful core verification establishes current-key provenance: control of the private key corresponding to the DNSSEC-authenticated `_agentid` key used for the request. It does not establish legal identity, registrar identity proofing, brand authorization, or continuity with an earlier key or registrant. The protocol is designed to compose with existing identity, authorization, attestation, and payment systems rather than to replace them.
 
 The attestation framework, including the role of Identity Service Providers, the attestation level taxonomy, and the claim vocabulary, is defined in a companion document.
 
@@ -57,6 +57,11 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
    - 5.4. Required Signature Parameters
    - 5.5. Request Profiles
    - 5.6. Verification Steps
+   - 5.7. The Groundmark-Claim Header Field
+     - 5.7.1. Syntax
+     - 5.7.2. Signature Coverage
+     - 5.7.3. Binding to DNS
+     - 5.7.4. Reference Hygiene
 6. DNS Publication Withdrawal and Key Rotation
    - 6.1. Key Rotation
    - 6.2. Identity Reset
@@ -74,6 +79,7 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
    - 8.2. Individual Operator Considerations
    - 8.3. Selective Disclosure
    - 8.4. Resolver-Side Observation
+   - 8.5. Committed References and Pre-Contact Evaluation
 9. Operational Considerations
    - 9.1. Caching and Resolver Load
    - 9.2. Coexistence with Other Protocols
@@ -86,6 +92,7 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
 11. IANA Considerations
     - 11.1. Underscored and Globally Scoped DNS Node Names Registry
     - 11.2. HTTP Signature Algorithms
+    - 11.3. HTTP Field Name Registration
 12. References
     - 12.1. Normative References
     - 12.2. Informative References
@@ -105,9 +112,9 @@ Groundmark separates three concerns:
 
 - **Identity discovery:** locating an agent's signing public key in DNS.
 - **Request authentication:** binding an HTTP request to an agent's key using HTTP Message Signatures [RFC9421].
-- **Attestation discovery:** pointing relying parties to externally hosted attestations describing what has been verified about the operator.
+- **Attestation discovery and authorization:** pointing relying parties to externally hosted attestations describing what has been verified about the operator, or, where the operator prefers not to make a claim discoverable, authorizing an attestation that the agent presents in-band.
 
-The first two are specified in this document. The third is introduced mechanically here, by defining a DNS record that references attestation endpoints; the trust semantics of those attestations are defined in the companion document [I-D.noss-jeftovic-groundmark-attestation].
+The first two are specified in this document. The third is introduced mechanically here, by defining a DNS record that references attestation endpoints in the clear or by digest commitment, and an HTTP header field through which an agent presents an attestation reference under its request signature; the trust semantics of those attestations are defined in the companion document [I-D.noss-jeftovic-groundmark-attestation].
 
 The semantics of the agent's domain string itself are not material to this protocol. An agent at `agent47.example.com` carries the same protocol weight as one at `x7q.example.com`. Successful core verification proves only that the request was signed by the private key corresponding to the DNSSEC-authenticated `_agentid` key selected for the agent domain. It does not prove that the domain registrant was identity-proofed, that the operator is a particular legal person, that the domain string is brand-authorized, or that a later key at the same domain is continuous with an earlier key.
 
@@ -116,7 +123,7 @@ The semantics of the agent's domain string itself are not material to this proto
 Groundmark is designed around the following principles:
 
 - **Authenticate the minimum necessary.** The intent is to enable permissionless interaction by default and to make stronger attestations available only where a relying party's risk profile demands them.
-- **DNS is a discovery layer, not a claims database.** TXT records publish cryptographic material and point to where attestations are held. Attestations themselves are served over HTTPS.
+- **DNS is a discovery layer, not a claims database.** TXT records publish cryptographic material and point to where attestations are held. Attestations themselves are served over HTTPS. Where an operator chooses not to make a claim discoverable, DNS still carries the operator's authorization of that claim, as a commitment to the attestation reference, so that DNS remains the single place a relying party consults to learn what the domain holder currently stands behind.
 - **No single point of control.** DNS is the common substrate, but no single entity controls which operators may publish agent identities, and the attestation framework defined in the companion document permits a diversity of Identity Service Providers.
 
 ### 1.2. Non-Goals
@@ -154,6 +161,12 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 **Identity Service Provider (IDSP)** — A trusted third party that verifies a claim about an operator or agent and issues a signed attestation. Defined fully in [I-D.noss-jeftovic-groundmark-attestation]; referenced here only insofar as the `_agentclaim` record points to attestations issued by IDSPs.
 
+**Open Claim Reference** — An `_agentclaim` record whose `ref=` parameter carries the HTTPS URL of an attestation. Any relying party that resolves the record can retrieve the attestation.
+
+**Committed Claim Reference** — An `_agentclaim` record whose `ref=` parameter carries a SHA-256 digest of an attestation URL rather than the URL itself. The attestation can be retrieved only by a relying party to which the agent has presented the URL in a signed request, and the record authorizes that presentation without disclosing it.
+
+**Presented Claim** — An attestation reference carried in a `Groundmark-Claim` header field covered by the request signature, as specified in Section 5.7.
+
 **Relying Party** — An agent, API endpoint, or service that receives an agent's request, verifies the request signature against the agent's DNS-published key, and optionally evaluates attestations referenced from DNS.
 
 ## 3. System Overview
@@ -163,9 +176,9 @@ A Groundmark-enabled HTTP request proceeds as follows.
 1. The operator publishes an `_agentid` TXT record at the agent domain, containing the agent's request-signing public key, and OPTIONALLY one or more `_agentclaim` TXT records referencing externally hosted attestations. All such records MUST be published in a DNSSEC-signed zone.
 2. The agent, or a key custodian operating the agent on the operator's behalf, signs each HTTP request using HTTP Message Signatures [RFC9421] as profiled in Section 5. The signature uses the agent's private key and identifies the corresponding public key through a keyid parameter that resolves to the agent domain.
 3. The relying party retrieves the `_agentid` TXT record for the agent domain using a DNSSEC-validating resolver and verifies the request signature against the selected public key. A successful verification establishes that the request was signed by the private key corresponding to the DNSSEC-authenticated key currently published for the agent domain.
-4. If the relying party's policy requires attestations beyond what is established by signature verification alone, it retrieves `_agentclaim` records for the agent domain, fetches the referenced attestations, and evaluates them according to the framework specified in the companion document.
+4. If the relying party's policy requires attestations beyond what is established by signature verification alone, it retrieves `_agentclaim` records for the agent domain. For open claim references it fetches the referenced attestations directly. For committed claim references it fetches only an attestation whose URL the agent presented in a signature-covered `Groundmark-Claim` header field and whose digest matches a published record. It then evaluates the attestations according to the framework specified in the companion document.
 
-DNS in this design is a discovery layer. It points to where keys and attestations are found; it does not itself host claim content. This mirrors the role DNS already plays for email authentication mechanisms such as DKIM [RFC6376] and DMARC [RFC7489].
+DNS in this design is a discovery layer. It points to where keys and attestations are found; it does not itself host claim content. This mirrors the role DNS already plays for email authentication mechanisms such as DKIM [RFC6376] and DMARC [RFC7489]. A committed claim reference narrows what DNS discloses without changing what DNS decides: the record still states that the domain holder currently authorizes the attestation, and removing the record still withdraws that authorization.
 
 Retrieving an agent's `_agentid` and `_agentclaim` records without verifying a request signature does not authenticate a caller and does not establish current control of the published private key. A protocol that exchanges a Groundmark verification result for an OAuth token or another session credential MUST first authenticate a signature made by the selected agent key. The lifetime and scope of the resulting credential are properties of that higher-layer protocol.
 
@@ -211,6 +224,27 @@ The relying party:
 5. Verifies the Ed25519 signature against the public key from the `_agentid` record.
 
 If the relying party's policy requires more than Level 0, it additionally retrieves `_agentclaim.purchasing.acmecorp.example`, fetches the attestation at the `ref=` URL, verifies it per [I-D.noss-jeftovic-groundmark-attestation], and applies its policy.
+
+Had the operator published the claim as a committed reference instead, the DNS record would carry only a digest:
+
+```dns
+_agentclaim.purchasing.acmecorp.example. 300 IN TXT
+  "v=gm1; ref=sha-256:ho4j3pA4P9mkHxaGvfaINSMnVRNzK0ceZ67JkHYJbxs"
+```
+
+and the agent would present the URL in the request itself, covered by the signature:
+
+```http
+Groundmark-Claim: claim-type="operator-verified"; \
+  ref="https://verify.example.net/a/4f9f3e1c7ab93d4f8d22"
+Signature-Input: gm=("@method" "@authority" "@target-uri" \
+    "content-digest" "groundmark-claim");created=1747654321;\
+    expires=1747654621;\
+    nonce="8b1c4e...";\
+    keyid="purchasing.acmecorp.example";alg="ed25519"
+```
+
+The relying party computes the SHA-256 digest of the presented URL, confirms that it equals the digest in a DNSSEC-validated `_agentclaim` record, and only then fetches and verifies the attestation. A party that reads the DNS record alone learns that the domain holder stands behind one attestation, and nothing else.
 
 The Level 0 result of this exchange is an Agent Identity Instance composed of the canonical agent domain and the thumbprint of the exact key that verified the request. Relying parties MUST NOT treat the FQDN alone as durable identity across a key change unless a separate continuity mechanism is verified and accepted by policy.
 
@@ -280,7 +314,9 @@ Relying parties MUST use a DNSSEC-validating resolver profile conforming to Sect
 
 The `_agentclaim` TXT record points to an externally hosted attestation about the operator or agent. The semantics of attestations themselves are defined in [I-D.noss-jeftovic-groundmark-attestation]; this document defines only the DNS record format and processing requirements.
 
-The most common form references an IDSP-hosted attestation:
+The record takes one of three shapes. An open claim reference carries the attestation URL and is discoverable by any relying party. A committed claim reference carries a digest of the attestation URL and can be opened only by a relying party to which the agent presents the URL under its request signature (Section 5.7). A self-asserted claim carries an inline value and no attestation at all. The choice between open and committed form is made per record by the operator, according to how sensitive the existence and content of that claim are.
+
+The most common form is an open reference to an IDSP-hosted attestation:
 
 ```dns
 _agentclaim.<agent-domain>. IN TXT
@@ -298,7 +334,22 @@ _agentclaim.<agent-domain>. IN TXT
 
 Relying parties MUST treat self-asserted claims as unverified operator assertions. The companion document specifies how such records are incorporated into the attestation level taxonomy.
 
-Multiple `_agentclaim` records MAY be present at the same label. Each represents an independent claim from a potentially different IDSP and is evaluated independently.
+A committed claim reference replaces the URL with its digest and MAY omit `claim=` and `idsp=`:
+
+```dns
+_agentclaim.<agent-domain>. IN TXT
+  "v=gm1; ref=sha-256:<base64url-digest>"
+```
+
+An operator that wants the existence and issuer of a claim to remain discoverable while keeping its content out of reach of a party that has not been presented the attestation MAY retain `claim=` and `idsp=` on a committed reference:
+
+```dns
+_agentclaim.<agent-domain>. IN TXT
+  "v=gm1; claim=<type>; idsp=<domain>;
+   ref=sha-256:<base64url-digest>; exp=<ISO8601-date>"
+```
+
+Multiple `_agentclaim` records MAY be present at the same label, in any mix of shapes. Each represents an independent claim from a potentially different IDSP and is evaluated independently.
 
 #### 4.2.1. ABNF Grammar
 
@@ -311,7 +362,9 @@ claim-param       = "claim=" claim-type
 claim-type        = token / x-claim-type
 x-claim-type      = "x-" 1*( ALPHA / DIGIT / "-" / "." )
 idsp-param        = "idsp=" hostname
-ref-param         = "ref=" https-url
+ref-param         = "ref=" ( https-url / ref-digest )
+ref-digest        = "sha-256:" 43base64url-char
+base64url-char    = ALPHA / DIGIT / "-" / "_"
 exp-param         = "exp=" date-value
 val-param         = "val=" param-value
 ext-param         = param-name "=" param-value
@@ -330,13 +383,21 @@ x-token           = "x-" 1*( ALPHA / DIGIT / "-" )
 
 #### 4.2.2. Processing Requirements
 
-The `claim=` field MUST be present in all `_agentclaim` records.
+A record is classified by its `ref=` and `val=` parameters:
 
-When `ref=` is present, `idsp=` MUST also be present. When `val=` is present, `ref=` and `idsp=` MUST NOT be present. A record that satisfies neither shape MUST be ignored.
+- **Open claim reference.** `ref=` carries an `https-url`. `claim=` and `idsp=` MUST both be present.
+- **Committed claim reference.** `ref=` carries a `ref-digest`. `claim=` and `idsp=` MAY each be present or absent. When present, each MUST equal the corresponding value in the presented claim and in the signed attestation, as specified in Section 5.7 and in [I-D.noss-jeftovic-groundmark-attestation].
+- **Self-asserted claim.** `val=` is present. `claim=` MUST be present, and `ref=` and `idsp=` MUST NOT be present.
+
+A record that satisfies none of these shapes, including a record whose `ref=` value is neither a syntactically valid HTTPS URL nor a well-formed `ref-digest`, MUST be ignored. A verifier conforming to an earlier version of this document, which recognizes only the URL form of `ref=`, will accordingly ignore committed claim references rather than fail on them.
 
 Relying parties MUST ignore records with unrecognized `claim=` values rather than treating them as errors, to preserve forward compatibility.
 
-`ref=` URLs MUST use the HTTPS scheme. The path component of a `ref=` URL MUST contain at least 128 bits of cryptographically random entropy (for example, a UUIDv4 or 22-character Base64url-encoded random string). This document does not treat `ref=` URLs as confidential, but the entropy requirement defends against enumeration attacks against IDSP attestation endpoints (see Section 7.4).
+`ref=` URLs MUST use the HTTPS scheme. The path component of a `ref=` URL MUST contain at least 128 bits of cryptographically random entropy (for example, a UUIDv4 or 22-character Base64url-encoded random string). For an open claim reference this document does not treat the URL as confidential, and the entropy requirement defends against enumeration attacks against IDSP attestation endpoints (see Section 7.4). For a committed claim reference the same entropy is what makes the digest resistant to dictionary attack, and the URL is confidential to the operator, the IDSP, the agent, and the relying parties to which it is presented.
+
+A `ref-digest` is computed as the SHA-256 hash of the UTF-8 octets of the attestation URL exactly as the attestation's `endpoint_url` field carries it and exactly as the agent presents it, with no normalization, trailing whitespace, or terminating newline. The 32-octet hash is encoded using Base64url without padding [RFC4648], yielding 43 characters, and prefixed with `sha-256:`. This is the same digest encoding used for `attestation_digest` in [I-D.noss-jeftovic-groundmark-attestation].
+
+A committed claim reference can be evaluated only in the context of a request that presents the corresponding URL. A relying party that resolves committed references but receives no matching presented claim MUST treat those records as unevaluable for policy, in the same way as records whose `claim=` value it does not recognize. It MUST NOT attempt to recover the URL by any means other than a presented claim whose digest matches.
 
 Operators SHOULD set the TTL of `_agentclaim` records to 300 seconds or less. The `exp=` value provides claim-level expiry that is independent of DNS TTL; relying parties MUST NOT use a claim whose `exp=` time has passed, regardless of cache state.
 
@@ -373,7 +434,7 @@ A Groundmark-compliant signature on any HTTP request that carries a request body
 
 A signature on a request with no body (for example, most GET requests) MAY omit Content-Digest.
 
-Every request field that the relying party uses for authorization, tenant selection, resource selection, routing, amount calculation, claim selection, idempotency, or any durable side effect MUST be covered by the HTTP Message Signature. In particular, `groundmark-claim` MUST be covered whenever an attestation is presented using that header, and `idempotency-key` MUST be covered whenever the application relies on that header for idempotency semantics.
+Every request field that the relying party uses for authorization, tenant selection, resource selection, routing, amount calculation, claim selection, idempotency, or any durable side effect MUST be covered by the HTTP Message Signature. In particular, `groundmark-claim` MUST be covered whenever an attestation is presented using that header (Section 5.7), and `idempotency-key` MUST be covered whenever the application relies on that header for idempotency semantics.
 
 ### 5.4. Required Signature Parameters
 
@@ -426,8 +487,60 @@ A relying party verifying a Groundmark request signature MUST perform the follow
 4. If a request body is present, verify that the value in the Content-Digest header field matches a digest of the received body, computed using an algorithm the verifier supports.
 5. Reconstruct the signature base per [RFC9421] from the covered components in the order indicated by Signature-Input.
 6. Verify the signature in the Signature header field against the reconstructed signature base using the public key from the `_agentid` record.
-7. If the verifier's policy requires attestations beyond Level 0 request authentication, proceed to retrieve and evaluate `_agentclaim` records per [I-D.noss-jeftovic-groundmark-attestation].
+7. If the verifier's policy requires attestations beyond Level 0 request authentication, retrieve the `_agentclaim` records for the agent domain. If the request carries a `Groundmark-Claim` header field, bind it to those records per Section 5.7 before any attestation is fetched. Evaluate open claim references, and committed claim references that were successfully bound, per [I-D.noss-jeftovic-groundmark-attestation].
 8. If the applicable request profile requires nonce enforcement, atomically consume the nonce at the final acceptance boundary. For Level 0-only verification this boundary is after Step 6. For composite verification involving attestations or application policy, this boundary is after all configured attestation, revocation, and policy checks have succeeded.
+
+### 5.7. The Groundmark-Claim Header Field
+
+An agent presents an attestation to a relying party by carrying a `Groundmark-Claim` header field in the request and covering it with the request signature. The header binds a specific attestation reference to a specific request, so that it cannot be stripped, substituted, or replayed against a different request. For an open claim reference the header is an optimization: it tells the relying party which of possibly several published claims the agent intends to satisfy policy with. For a committed claim reference the header is the only way the relying party can learn the attestation URL, and presentation is therefore REQUIRED for the claim to be evaluated at all.
+
+#### 5.7.1. Syntax
+
+```abnf
+groundmark-claim  = claim-member *( ";" SP claim-member )
+claim-member      = claim-type-member / ref-member /
+                    idsp-member / ext-member
+claim-type-member = "claim-type=" DQUOTE claim-type DQUOTE
+ref-member        = "ref=" DQUOTE quoted-url DQUOTE
+idsp-member       = "idsp=" DQUOTE hostname DQUOTE
+ext-member        = param-name "=" DQUOTE quoted-value DQUOTE
+quoted-url        = "https://" 1*( %x21 / %x23-3A / %x3C-7E )
+                    ; visible ASCII excluding DQUOTE and ";"
+quoted-value      = *( %x21 / %x23-3A / %x3C-7E )
+```
+
+`claim-type`, `hostname`, and `param-name` are as defined in Section 4.2.1.
+
+The `claim-type` and `ref` members MUST be present. The `ref` member MUST carry the attestation URL; a `ref-digest` MUST NOT appear in the header. The `idsp` member is OPTIONAL and SHOULD be present when the matching `_agentclaim` record omits `idsp=`, so that the relying party can apply issuer authorization before fetching. Unknown members MUST be ignored.
+
+Example:
+
+```http
+Groundmark-Claim: claim-type="operator-verified"; \
+  ref="https://verify.example.net/a/4f9f3e1c7ab93d4f8d22"
+```
+
+This version of the specification permits at most one `Groundmark-Claim` header field per request. A request carrying more than one MUST be rejected. Presentation of several claims in one request is deferred to a future version.
+
+#### 5.7.2. Signature Coverage
+
+Whenever a `Groundmark-Claim` header field is present, the request signature MUST cover the `groundmark-claim` component, as required by Section 5.3. A relying party MUST reject a request whose `Groundmark-Claim` header field is present but not covered.
+
+#### 5.7.3. Binding to DNS
+
+After request-signature verification succeeds and before any attestation is fetched, a relying party evaluating a presented claim MUST retrieve the `_agentclaim` records for the canonical agent domain using the resolver profile of Section 7.1 and MUST locate exactly one record that matches the presented claim. A record matches when all of the following hold:
+
+1. If the record's `ref=` is an `https-url`, it is octet-for-octet equal to the presented `ref`. If the record's `ref=` is a `ref-digest`, it is equal to the digest of the presented `ref` computed as specified in Section 4.2.2.
+2. If the record carries `claim=`, it is equal to the presented `claim-type`.
+3. If the record carries `idsp=` and the header carries `idsp`, the two are equal.
+
+If no record matches, or if validation of the `_agentclaim` RRset fails under Section 7.1, the presented claim MUST be rejected and the relying party MUST NOT fetch the presented URL. If a matching record is found, the relying party proceeds to fetch and verify the attestation under [I-D.noss-jeftovic-groundmark-attestation], which additionally binds the signed attestation payload to the record and to the presented values.
+
+The presented claim MUST be the claim that satisfies the relying party's policy. A relying party MUST NOT accept a request on the strength of a different attestation, whether presented or discovered, when its policy required the presented claim type.
+
+#### 5.7.4. Reference Hygiene
+
+A presented `ref` that matches a committed claim reference is confidential. Relying parties MUST NOT log, expose in telemetry, forward to third parties, or republish such a URL, and MUST apply the fetch-hardening logging rule of [I-D.noss-jeftovic-groundmark-attestation], which permits logging only the URL origin and a digest of the full URL. Relying parties SHOULD apply the same handling to every presented `ref`, since a relying party cannot always know in advance which form the matching record will take.
 
 ## 6. DNS Publication Withdrawal and Key Rotation
 
@@ -435,7 +548,7 @@ DNS publication controls what a relying party can currently discover and authori
 
 **Agent-key withdrawal** — The operator removes an `_agentid` request-signing record. After cached copies expire, new requests cannot authenticate as the removed Agent Identity Instance. Withdrawal does not assert why the key disappeared and does not prove that the key was destroyed or historically compromised.
 
-**Claim-reference withdrawal** — The operator removes a specific `_agentclaim` record. After cached copies expire, relying parties MUST NOT treat that DNS reference as current authorization to use the claim. Withdrawal does not change the referenced attestation's signed status and MUST NOT be represented as IDSP-issued revocation.
+**Claim-reference withdrawal** — The operator removes a specific `_agentclaim` record. After cached copies expire, relying parties MUST NOT treat that DNS reference as current authorization to use the claim. Withdrawal does not change the referenced attestation's signed status and MUST NOT be represented as IDSP-issued revocation. This applies identically to open and committed claim references: removing a committed reference means that a subsequently presented URL no longer matches any record and MUST be rejected under Section 5.7.3, without any change to the attestation or the agent key.
 
 **Attestation status** — An IDSP makes authoritative lifecycle statements about an attestation through the independently signed status mechanism in [I-D.noss-jeftovic-groundmark-attestation]. Status-layer revocation is separate from DNS withdrawal and does not disable an otherwise valid agent request-signing key.
 
@@ -505,7 +618,11 @@ For requests with a body, the Content-Digest covered-component requirement of Se
 
 `ref=` URLs function as opaque bearer references to attestation content. The minimum 128-bit entropy requirement in Section 4.2.2 defends against enumeration of IDSP attestation endpoints. IDSPs MUST use cryptographically random URL path components and MUST NOT use sequential, predictable, or low-entropy identifiers. Implementations SHOULD avoid unnecessary exposure of `ref=` URLs in logs, telemetry, or third-party-accessible interfaces.
 
-The high-entropy `ref=` design does not by itself render attestation content confidential at the network layer; rather, it ensures that relying parties retrieve attestations by reference rather than by guessable enumeration. Confidentiality properties of attestation content are specified by the companion document.
+For an open claim reference, the high-entropy `ref=` design does not by itself render attestation content confidential at the network layer; rather, it ensures that relying parties retrieve attestations by reference rather than by guessable enumeration. Confidentiality properties of attestation content are specified by the companion document.
+
+For a committed claim reference, the entropy requirement carries the whole confidentiality property. The digest published in DNS is only as resistant to dictionary attack as the URL is unpredictable; a URL with a guessable path would allow an observer to confirm a candidate URL against the published digest. IDSPs MUST NOT issue attestations intended for committed publication at URLs whose path is derived from the agent domain, the claim type, a sequence number, a timestamp, or any other value an observer could enumerate. The URL is transmitted only inside HTTPS requests to the relying party and from the relying party to the IDSP; the network observes the IDSP hostname through TLS server name indication but not the path. Relying parties MUST NOT log presented URLs that match a committed reference, per Section 5.7.4.
+
+A committed claim reference does not provide confidentiality against the relying parties to which it is presented, nor against the IDSP, nor against a passive observer positioned to read the agent's request traffic in the clear. It provides confidentiality against a party that reads DNS alone.
 
 ### 7.5. Subdomain Takeover and Endpoint Decommissioning
 
@@ -553,9 +670,12 @@ What is publicly visible when an operator publishes Groundmark records is:
 
 - The fact that the named agent domain participates in Groundmark.
 - The agent's signing public key.
-- The type of any attestations available for the agent (the `claim=` field) and the identity of the IDSP issuing them (the `idsp=` field).
+- For each open claim reference, the type of the attestation (the `claim=` field), the identity of the IDSP issuing it (the `idsp=` field), and the URL at which anyone can retrieve its content.
+- For each committed claim reference, the fact that one attestation is authorized, plus whichever of `claim=` and `idsp=` the operator chose to retain.
 
-Attestation content itself is not in DNS. It is reachable only by following the high-entropy `ref=` URL, which is not enumerable from the DNS record alone.
+Attestation content itself is not in DNS. For an open claim reference it is reachable by anyone who follows the `ref=` URL; the URL's entropy prevents enumeration of the IDSP's endpoints but does not restrict who may follow a published URL. For a committed claim reference it is reachable only by a relying party to which the agent has presented the URL.
+
+The open form is the expected default for organizational deployment, where discoverability before first contact is a feature: a counterparty can evaluate an agent's published claims before deciding whether to transact, and third parties can build reputation and monitoring services on the public record. The committed form is available for claims whose existence or content an operator judges too sensitive for that treatment. The two forms coexist at the same label.
 
 ### 8.2. Individual Operator Considerations
 
@@ -563,15 +683,27 @@ The organizational framing above does not address the case of an individual oper
 
 For this case, the recommended pattern is provider-hosted agent identities, analogous to the WHOIS privacy proxy model long used in domain registration. An individual operator participating in Groundmark SHOULD publish agent identity records under a provider's domain rather than under a personal domain, where the provider's underlying relationship with the operator preserves the accountability chain that an IDSP-issued attestation depends on. This keeps the operator's personal domain outside the public record while preserving the attestation framework's accountability semantics.
 
+An individual operator who does publish under a personal domain SHOULD publish sensitive claims as committed claim references without `claim=` or `idsp=`. The record then discloses only that an attestation exists, and the claim type, issuer, and content are revealed only to relying parties the agent chooses to transact with. The two mitigations are independent and MAY be combined.
+
 This is a recommendation, not a normative requirement; nothing in this specification prevents an individual operator from publishing Groundmark records under a personal domain if they choose.
 
 ### 8.3. Selective Disclosure
 
 The protocol publishes only public keys in `_agentid` and only attestation references (not values) in `_agentclaim`. The attestation framework specified in the companion document is built around minimal disclosure: attestation values are bounded predicates such as "the operator is over 18", not the underlying personal data.
 
+Committed claim references extend selective disclosure from the content of a claim to its existence. Because a committed claim is evaluated only when presented, the agent, and through it the operator, decides per request which relying party learns of the claim at all. This is the property that the `Groundmark-Claim` header field exists to provide.
+
 ### 8.4. Resolver-Side Observation
 
 DNS resolution of `_agentid` and `_agentclaim` records is, like any DNS lookup, observable by network operators on the path between the relying party and the authoritative servers. Relying parties concerned about this leakage SHOULD use authenticated, encrypted transports to their recursive resolver (such as DNS-over-HTTPS [RFC8484]).
+
+Committed claim references do not add to this exposure. The names queried are the same as for open references, and the digest in the response reveals nothing about the attestation. This is a deliberate consequence of placing the secret in the HTTPS path rather than in a DNS name: a scheme that hid claims under an unguessable DNS label would expose that label to every resolver on the path and to passive DNS collection on first use.
+
+### 8.5. Committed References and Pre-Contact Evaluation
+
+A committed claim reference is invisible to a relying party until the agent presents it. This is the intended privacy property, and it has a direct operational cost that operators choosing the committed form accept: a relying party cannot evaluate a committed claim before the agent's first request, cannot pre-screen a counterparty on the strength of it, and cannot discover which claim types an agent holds in order to decide which to require. Third-party reputation or monitoring services likewise cannot observe committed claims.
+
+A relying party whose policy requires a specific claim type therefore has to communicate that requirement to the agent before the agent can present a committed claim satisfying it. This document does not define a requirement-signalling mechanism; an HTTP 401 or 403 response body or a service description are both suitable carriers, and a future version may define a header field for the purpose. Until then, operators SHOULD publish as open claim references any claims that relying parties are expected to require without prior negotiation.
 
 ## 9. Operational Considerations
 
@@ -634,6 +766,14 @@ The registry operates under Expert Review per [RFC8552].
 
 This document does not define new entries in the "HTTP Signature Algorithms" registry established by [RFC9421]. Groundmark implementations use registered algorithms only; the mandatory-to-implement algorithm `ed25519` is already registered by [RFC9421].
 
+### 11.3. HTTP Field Name Registration
+
+IANA is requested to add the following entry to the "Hypertext Transfer Protocol (HTTP) Field Name Registry" defined in [RFC9110]:
+
+| Field Name       | Status    | Reference                 |
+| ---------------- | --------- | ------------------------- |
+| Groundmark-Claim | permanent | This document, Section 5.7 |
+
 ## 12. References
 
 ### 12.1. Normative References
@@ -646,6 +786,7 @@ This document does not define new entries in the "HTTP Signature Algorithms" reg
 - **[RFC8174]** — Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words", BCP 14, RFC 8174, May 2017, <https://www.rfc-editor.org/rfc/rfc8174>.
 - **[RFC8552]** — Crocker, D., "Scoped Interpretation of DNS Resource Records through \"Underscored\" Naming of Attribute Leaves", BCP 222, RFC 8552, March 2019, <https://www.rfc-editor.org/rfc/rfc8552>.
 - **[RFC9421]** — Backman, A., Ed., Richer, J., Ed., and M. Sporny, "HTTP Message Signatures", RFC 9421, February 2024, <https://www.rfc-editor.org/rfc/rfc9421>.
+- **[RFC9110]** — Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke, Ed., "HTTP Semantics", STD 97, RFC 9110, June 2022, <https://www.rfc-editor.org/rfc/rfc9110>.
 - **[RFC9530]** — Polli, R. and L. Pardue, "Digest Fields", RFC 9530, February 2024, <https://www.rfc-editor.org/rfc/rfc9530>.
 
 ### 12.2. Informative References
@@ -677,6 +818,9 @@ The authors thank Doc Searls for substantive review of earlier drafts, and the b
 - Required atomic single-use nonce consumption at the final acceptance boundary, after configured cryptographic, DNSSEC, attestation, revocation, and policy checks succeed.
 - Strengthened the DNSSEC resolver profile, including authenticated resolver-channel requirements and fatal handling for insecure, bogus, indeterminate, timeout, transport, and validation-error results.
 - Added security considerations for domain expiry, re-registration, registrar compromise, current-key provenance, and operator assurance boundaries.
+- Added committed claim references: an `_agentclaim` `ref=` value may carry a SHA-256 digest of the attestation URL instead of the URL, with `claim=` and `idsp=` optional in that form, so that a claim's existence, issuer, and content are disclosed only to relying parties the agent presents it to.
+- Defined the `Groundmark-Claim` header field, previously referenced but unspecified, including its syntax, mandatory signature coverage, binding to open and committed `_agentclaim` records before any fetch, and reference hygiene.
+- Added privacy considerations on the trade-off between committed references and pre-contact evaluation, and on why the secret lives in the HTTPS path rather than a DNS name.
 
 ### -00
 
