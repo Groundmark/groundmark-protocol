@@ -102,14 +102,14 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
 
 ## 1. Introduction
 
-The Groundmark core protocol [I-D.noss-jeftovic-groundmark-core] specifies how an agent's signing public key and references to externally hosted attestations are published in DNS, and how relying parties verify HTTP request signatures using the published key. The core protocol intentionally treats attestation content as opaque: DNS publishes a reference, either in the clear or as a digest commitment that the agent opens by presenting the URL in a signed request, the relying party retrieves the attestation over HTTPS, and the question of what an attestation says and how it should be evaluated is deferred to this document.
+The Groundmark core protocol [I-D.noss-jeftovic-groundmark-core] specifies how an agent's signing public key and references to externally hosted attestations are published in DNS, and how relying parties verify HTTP request signatures using the published key. The core protocol intentionally treats attestation content as opaque: DNS publishes a reference (either in the clear or as a digest commitment that the agent opens by presenting the URL in a signed request), the relying party retrieves the attestation over HTTPS, and the question of what an attestation says and how it should be evaluated is deferred to this document.
 
 This document specifies that evaluation framework. It defines:
 
 - The role of an Identity Service Provider (IDSP), an entity that verifies a claim about an operator or agent and publishes a signed attestation under the Groundmark framework.
 - A four-level taxonomy of attestation strength, from cryptographic-only Level 0 through regulatory-grade Level 3.
 - An initial vocabulary of claim types, with structured value schemas and registration policy for extensions.
-- The key-bound JSON schema and canonical signature construction for an attestation payload served at a `ref=` URL.
+- The key-bound JSON schema and canonical signature construction for an attestation payload served at the attestation URL that an `_agentclaim` `ref=` field references or commits to.
 - The method-disclosure obligation: an IDSP's primary duty is to accurately characterize the verification it performed, not to assert a conclusion. This obligation is what makes Groundmark attestations evaluable rather than reducible to brand recognition.
 - Signed status and revocation semantics specific to the attestation layer, including cache freshness and explicit relying-party grace policy for unavailable status endpoints.
 
@@ -175,7 +175,11 @@ The terminology of the core protocol [I-D.noss-jeftovic-groundmark-core] applies
 
 **Pending Publication** — The pre-active state of an issued attestation whose `_agentclaim` reference, in open or committed form, has not yet been observed in DNS. A pending attestation is not valid for relying-party policy satisfaction.
 
-**Open Claim Reference**, **Committed Claim Reference**, **Presented Claim** — As defined in the core protocol. An open reference publishes the attestation URL in DNS; a committed reference publishes its SHA-256 digest and is opened only by a presented claim carrying the URL.
+**Open Claim Reference** — As defined in the core protocol: an `_agentclaim` record whose `ref=` parameter carries the attestation URL.
+
+**Committed Claim Reference** — As defined in the core protocol: an `_agentclaim` record whose `ref=` parameter carries the SHA-256 digest of the attestation URL, opened only by a presented claim carrying the URL.
+
+**Presented Claim** — As defined in the core protocol: an attestation reference carried in a `Groundmark-Claim` header field covered by the request signature.
 
 **Relying Party** — As in the core protocol. In this document's context, a relying party evaluating attestations decides which IDSPs it trusts and for what purposes, and which attestation levels and claim types it requires.
 
@@ -261,7 +265,7 @@ A relying party operating at Level 3 CAN rely on the attestation to satisfy its 
 
 An agent identity MAY carry multiple `_agentclaim` records simultaneously, each independent. A single agent might present a Level 1 operator-verified attestation alongside several Level 2 claim-specific attestations from different IDSPs. The relying party selects only the claims its policy requires.
 
-Selection works differently for the two reference forms. Open claim references are all visible to the relying party, which chooses among them. A committed claim reference is visible only when presented, and the core protocol currently permits one presented claim per request. A policy that requires several claims to be evaluated together can therefore be satisfied in a single request only if at most one of them is committed. Operators SHOULD publish as open references any claims that relying parties are expected to evaluate in combination, and SHOULD reserve the committed form for claims whose existence is itself sensitive.
+Selection works differently for the two reference forms. Open claim references are all visible to the relying party, which chooses among them. A committed claim reference is visible only when presented, and the core protocol permits one presented claim per request in this version. A policy that requires several claims to be evaluated together can therefore be satisfied in a single request only if at most one of them is committed. Operators SHOULD publish as open references any claims that relying parties are expected to evaluate in combination, and SHOULD reserve the committed form for claims whose existence is itself sensitive.
 
 Multiple attestations from different IDSPs do not implicitly refer to the same underlying operator identity, since IDSPs do not coordinate with one another. Section 9.3 addresses this limitation.
 
@@ -445,7 +449,7 @@ The claim value MAY include a jurisdiction or framework identifier when brand au
 
 ## 6. Attestation Payload Schema
 
-This section defines the JSON document served by an IDSP at the URL referenced by an `_agentclaim` `ref=` field.
+This section defines the JSON document served by an IDSP at the attestation URL that an `_agentclaim` `ref=` field references or commits to.
 
 ### 6.1. JSON and Canonicalization Profile
 
@@ -536,7 +540,7 @@ For `idsp-operated-technology`, `performed_by.role` is `idsp` and `provider` ide
 
 ### 6.6. Worked Example
 
-The following non-normative example illustrates the JSON payload served by an IDSP at the URL referenced by an `_agentclaim` `ref=` field. It is the Level 1 operator-verified attestation referenced by the worked example in the core protocol.
+The following non-normative example illustrates the JSON payload served by an IDSP at the attestation URL that an `_agentclaim` `ref=` field references or commits to. It is the Level 1 operator-verified attestation referenced by the worked example in the core protocol.
 
 ```json
 {
@@ -639,7 +643,7 @@ The IDSP's public keys are published in DNS using the `_agentid.<idsp-domain>` c
 
 ### 7.1. Verification Context and Mandatory Bindings
 
-Attestation verification is performed in the context of a Groundmark request, a DNS `_agentclaim` record, and, when present, a presented claim carried in the request's `Groundmark-Claim` header field. For a committed claim reference the presented claim has already been bound to the DNS record by digest under the core protocol before the attestation was fetched; the bindings in this section then close the loop between the signed payload and both sources. A verifier MUST reject the attestation unless all of the following bindings hold after signature verification:
+Attestation verification is performed in the context of a Groundmark request, a DNS `_agentclaim` record, and, when present, a presented claim carried in the request's `Groundmark-Claim` header field. For a committed claim reference the presented claim has already been bound to the DNS record by digest under the core protocol before the attestation was fetched; the bindings in this section then bind the signed payload to both. A verifier MUST reject the attestation unless all of the following bindings hold after signature verification:
 
 ```text
 payload.subject == evaluated agent domain
@@ -654,9 +658,9 @@ payload.endpoint_url == presented ref, when a claim was presented
 sha-256(payload.endpoint_url) == DNS ref=, for a committed claim reference
 ```
 
-At least one of the `claim_type` bindings and at least one of the `endpoint_url` bindings MUST apply; an attestation that reaches this step with neither a DNS `claim=` nor a presented claim type, or with a committed reference and no presented claim, is a verifier defect and MUST be rejected.
+At least one of the `claim_type` bindings and at least one of the `endpoint_url` bindings MUST apply; an attestation that reaches this step with neither a DNS `claim=` nor a presented claim type, or with a committed reference and no presented claim, MUST be rejected.
 
-All FQDN comparisons use lowercase IDNA A-label form with no trailing root label. URL comparisons use the exact canonical URL string from the DNS or presentation `ref=` value after syntax validation; implementations MUST NOT normalize one URL into another in a way that changes octets, authority, path, query, or percent-encoding. The digest comparison for a committed reference is computed over the octets of `payload.endpoint_url` exactly as specified by the core protocol. The request-signing-key identifier and thumbprint are taken from the exact Ed25519 `_agentid` key that verified the request. A `subject_key_id` mismatch is a binding failure even when the thumbprint matches.
+All FQDN comparisons use lowercase IDNA A-label form with no trailing root label. URL comparisons use the exact canonical URL string from the DNS `ref=` value or the presented `ref` after syntax validation; implementations MUST NOT normalize one URL into another in a way that changes octets, authority, path, query, or percent-encoding. The digest comparison for a committed reference is computed over the octets of `payload.endpoint_url` exactly as specified by the core protocol. The request-signing-key identifier and thumbprint are taken from the exact Ed25519 `_agentid` key that verified the request. A `subject_key_id` mismatch is a binding failure even when the thumbprint matches.
 
 The DNS `claim=` and `idsp=` values where present, the signed presentation claim type and IDSP where present, and the signed payload fields MUST all agree before policy evaluation. A mismatch is a cryptographic binding failure, not merely a policy miss. Implementations SHOULD expose distinct diagnostics such as `wrong_subject`, `subject_key_id_mismatch`, `subject_key_mismatch`, `attestation_claim_type_mismatch`, `attestation_idsp_mismatch`, and `endpoint_mismatch`.
 
@@ -664,7 +668,7 @@ The DNS `claim=` and `idsp=` values where present, the signed presentation claim
 
 A relying party verifying an attestation payload MUST:
 
-1. For a presented claim, confirm under the core protocol that the presented `ref` matches exactly one `_agentclaim` record, by URL equality for an open reference or by digest for a committed reference, before issuing any fetch. A presented URL that matches no record MUST NOT be fetched.
+1. For a presented claim, confirm that the presented `ref` matches exactly one `_agentclaim` record under the matching rules of the core protocol before issuing any fetch. A presented URL that matches no record MUST NOT be fetched. Where the matching record omits `idsp=` and the presented claim carries `idsp`, the relying party MAY apply the issuer authorization of step 13 to the presented `idsp` before issuing the fetch.
 2. Apply the fetch hardening requirements in Section 9.8 when retrieving the attestation.
 3. Enforce response size, content type, and strict UTF-8 handling.
 4. Parse JSON with duplicate-member detection and validate the I-JSON profile in Section 6.1.
@@ -765,7 +769,7 @@ Use of a status grace period MUST be logged. The logging requirements below are 
 
 The log entry MUST include:
 
-- The agent domain and the attestation's `endpoint_url`.
+- The agent domain, the origin of the attestation's `endpoint_url`, and the SHA-256 digest of the full URL.
 - The attestation's `attestation_id`.
 - The `idsp`, `claim_type`, and `level` from the attestation.
 - The most recent accepted status `sequence`, `this_update`, and `next_update`.
@@ -856,7 +860,7 @@ For an open claim reference, DNS discloses the existence of an attestation of a 
 
 For a committed claim reference, DNS discloses that one authorized attestation exists, together with whichever of `claim_type` and `idsp` the operator chose to retain in the record. The URL, and through it the content, is disclosed only to relying parties the agent presents the claim to. An operator that retains `claim=` and `idsp=` keeps the claim discoverable while withholding its content; an operator that omits both withholds the claim's existence from anyone who has not been presented it.
 
-This is an intentional design tradeoff, now exposed to the operator as a per-claim choice. Publishing the claim type and IDSP name supports interoperability, pre-contact evaluation, and meaningful relying-party policy, and is the expected default for organizational deployment. Committing the reference trades that discoverability for control over who learns of the claim. Individual operators concerned about visibility have two independent mitigations, provider-hosted identities and committed references, as discussed in the core protocol's Privacy Considerations.
+This is an intentional design tradeoff, exposed to the operator as a per-claim choice. Publishing the claim type and IDSP name supports interoperability, pre-contact evaluation, and meaningful relying-party policy, and is the expected default for organizational deployment. Committing the reference trades that discoverability for control over who learns of the claim. Individual operators concerned about visibility have two independent mitigations (provider-hosted identities and committed references), as discussed in the core protocol's Privacy Considerations.
 
 ### 10.3. Linkability Across Relying Parties
 
@@ -969,7 +973,7 @@ The authors thank Doc Searls for substantive review of earlier drafts, the late 
 ### -01
 
 - Defined schema version 1.1 with immutable attestation IDs, claim subjects, exact request-key thumbprint binding, and status URLs.
-- Added mandatory attestation bindings for subject, request-signing key identifier and thumbprint, DNS claim, DNS IDSP, and endpoint/ref.
+- Added mandatory attestation bindings for subject, request-signing key identifier and thumbprint, DNS claim, DNS IDSP, and endpoint URL.
 - Replaced mutable `short_lived_token` and `revocation_endpoint` semantics with independently signed, cacheable status objects that fail closed by default after freshness expiry.
 - Defined purpose-separated IDSP attestation and status keys, the `pending_publication` state, terminal revocation, reversible suspension, and monotonic status refresh.
 - Clarified private pre-agent operator verification, direct and provider-hosted binding, and the requirement that custom Level 1 claims meet the Level 1 accountability baseline.

@@ -65,7 +65,7 @@ This document is subject to BCP 78 and the IETF Trust's Legal Provisions Relatin
    - 5.8. The Groundmark-Accept Header Field
      - 5.8.1. Syntax
      - 5.8.2. Semantics
-     - 5.8.3. Holder Processing
+     - 5.8.3. Agent Processing
      - 5.8.4. Integrity and Caching
 6. DNS Publication Withdrawal and Key Rotation
    - 6.1. Key Rotation
@@ -171,7 +171,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 **Committed Claim Reference** — An `_agentclaim` record whose `ref=` parameter carries a SHA-256 digest of an attestation URL rather than the URL itself. The attestation can be retrieved only by a relying party to which the agent has presented the URL in a signed request, and the record authorizes that presentation without disclosing it.
 
-**Presented Claim** — An attestation reference carried in a `Groundmark-Claim` header field covered by the request signature, as specified in Section 5.7.
+**Presented Claim** — An attestation reference carried in a Groundmark-Claim header field covered by the request signature, as specified in Section 5.7.
 
 **Relying Party** — An agent, API endpoint, or service that receives an agent's request, verifies the request signature against the agent's DNS-published key, and optionally evaluates attestations referenced from DNS.
 
@@ -182,7 +182,7 @@ A Groundmark-enabled HTTP request proceeds as follows.
 1. The operator publishes an `_agentid` TXT record at the agent domain, containing the agent's request-signing public key, and OPTIONALLY one or more `_agentclaim` TXT records referencing externally hosted attestations. All such records MUST be published in a DNSSEC-signed zone.
 2. The agent, or a key custodian operating the agent on the operator's behalf, signs each HTTP request using HTTP Message Signatures [RFC9421] as profiled in Section 5. The signature uses the agent's private key and identifies the corresponding public key through a keyid parameter that resolves to the agent domain.
 3. The relying party retrieves the `_agentid` TXT record for the agent domain using a DNSSEC-validating resolver and verifies the request signature against the selected public key. A successful verification establishes that the request was signed by the private key corresponding to the DNSSEC-authenticated key currently published for the agent domain.
-4. If the relying party's policy requires attestations beyond what is established by signature verification alone, it retrieves `_agentclaim` records for the agent domain. For open claim references it fetches the referenced attestations directly. For committed claim references it fetches only an attestation whose URL the agent presented in a signature-covered `Groundmark-Claim` header field and whose digest matches a published record. It then evaluates the attestations according to the framework specified in the companion document.
+4. If the relying party's policy requires attestations beyond what is established by signature verification alone, it retrieves `_agentclaim` records for the agent domain. For open claim references it fetches the referenced attestations directly. For committed claim references it fetches only an attestation whose URL the agent presented in a signature-covered Groundmark-Claim header field and whose digest matches a published record. It then evaluates the attestations according to the framework specified in the companion document.
 
 DNS in this design is a discovery layer. It points to where keys and attestations are found; it does not itself host claim content. This mirrors the role DNS already plays for email authentication mechanisms such as DKIM [RFC6376] and DMARC [RFC7489]. A committed claim reference narrows what DNS discloses without changing what DNS decides: the record still states that the domain holder currently authorizes the attestation, and removing the record still withdraws that authorization.
 
@@ -374,7 +374,7 @@ base64url-char    = ALPHA / DIGIT / "-" / "_"
 exp-param         = "exp=" date-value
 val-param         = "val=" param-value
 ext-param         = param-name "=" param-value
-token             = 1*( ALPHA / DIGIT / "-" )
+token             = ALPHA *( ALPHA / DIGIT / "-" )
 hostname          = 1*( ALPHA / DIGIT / "." / "-" )
 https-url         = "https://" 1*( %x21-3A / %x3C-7E )
                     ; visible ASCII excluding ";"
@@ -470,7 +470,7 @@ The state-changing profile applies to POST, PUT, PATCH, DELETE, payment, authori
 
 For this profile:
 
-- The relying party MUST issue an unpredictable nonce. It SHOULD deliver the nonce in an `Accept-Signature` response field as defined in Section 5.1 of [RFC9421], as the value of that field's `nonce` parameter, in the response that challenges or precedes the state-changing request; the same field lists the components the relying party expects the signature to cover, including `groundmark-claim` when an attestation is expected (Section 5.8). An application MAY deliver the nonce by another means it defines. The nonce semantics of this section apply regardless of how the nonce was delivered.
+- The relying party MUST issue an unpredictable nonce. It SHOULD deliver the nonce in an Accept-Signature header field as defined in Section 5.1 of [RFC9421], as the value of that field's `nonce` parameter, in the response that challenges or precedes the state-changing request; the same field lists the components the relying party expects the signature to cover, including `groundmark-claim` when an attestation is expected (Section 5.8). An application MAY deliver the nonce by another means it defines. The nonce semantics of this section apply regardless of how the nonce was delivered.
 - The nonce lifetime MUST be no more than 300 seconds.
 - The nonce MUST be carried as a Signature-Input parameter and thereby bound through `@signature-params`.
 - `expires` MUST be present and signed.
@@ -493,12 +493,12 @@ A relying party verifying a Groundmark request signature MUST perform the follow
 4. If a request body is present, verify that the value in the Content-Digest header field matches a digest of the received body, computed using an algorithm the verifier supports.
 5. Reconstruct the signature base per [RFC9421] from the covered components in the order indicated by Signature-Input.
 6. Verify the signature in the Signature header field against the reconstructed signature base using the public key from the `_agentid` record.
-7. If the verifier's policy requires attestations beyond Level 0 request authentication, retrieve the `_agentclaim` records for the agent domain. If the request carries a `Groundmark-Claim` header field, bind it to those records per Section 5.7 before any attestation is fetched. Evaluate open claim references, and committed claim references that were successfully bound, per [I-D.noss-jeftovic-groundmark-attestation].
+7. If the verifier's policy requires attestations beyond Level 0 request authentication, retrieve the `_agentclaim` records for the agent domain. If the request carries a Groundmark-Claim header field, bind it to those records per Section 5.7 before any attestation is fetched. Evaluate open claim references, and committed claim references that were successfully bound, per [I-D.noss-jeftovic-groundmark-attestation].
 8. If the applicable request profile requires nonce enforcement, atomically consume the nonce at the final acceptance boundary. For Level 0-only verification this boundary is after Step 6. For composite verification involving attestations or application policy, this boundary is after all configured attestation, revocation, and policy checks have succeeded.
 
 ### 5.7. The Groundmark-Claim Header Field
 
-An agent presents an attestation to a relying party by carrying a `Groundmark-Claim` header field in the request and covering it with the request signature. The header binds a specific attestation reference to a specific request, so that it cannot be stripped, substituted, or replayed against a different request. For an open claim reference the header is an optimization: it tells the relying party which of possibly several published claims the agent intends to satisfy policy with. For a committed claim reference the header is the only way the relying party can learn the attestation URL, and presentation is therefore REQUIRED for the claim to be evaluated at all.
+An agent presents an attestation to a relying party by carrying a Groundmark-Claim header field in the request and covering it with the request signature. The header binds a specific attestation reference to a specific request, so that it cannot be stripped, substituted, or replayed against a different request. For an open claim reference the header is an optimization: it tells the relying party which of possibly several published claims the agent intends to satisfy policy with. For a committed claim reference the header is the only way the relying party can learn the attestation URL, and presentation is therefore REQUIRED for the claim to be evaluated at all.
 
 #### 5.7.1. Syntax
 
@@ -519,18 +519,18 @@ quoted-value      = *( %x21 / %x23-3A / %x3C-7E )
 
 The `claim-type` and `ref` members MUST be present. The `ref` member MUST carry the attestation URL; a `ref-digest` MUST NOT appear in the header. The `idsp` member is OPTIONAL and SHOULD be present when the matching `_agentclaim` record omits `idsp=`, so that the relying party can apply issuer authorization before fetching. Unknown members MUST be ignored.
 
-Example:
+The following non-normative example presents the operator-verified attestation of the worked example in Section 3.1:
 
 ```http
 Groundmark-Claim: claim-type="operator-verified"; \
   ref="https://verify.example.net/a/4f9f3e1c7ab93d4f8d22"
 ```
 
-This version of the specification permits at most one `Groundmark-Claim` header field per request. A request carrying more than one MUST be rejected. Presentation of several claims in one request is deferred to a future version.
+This document permits at most one Groundmark-Claim header field per request. A request carrying more than one MUST be rejected. Presentation of several claims in one request is deferred to a future version.
 
 #### 5.7.2. Signature Coverage
 
-Whenever a `Groundmark-Claim` header field is present, the request signature MUST cover the `groundmark-claim` component, as required by Section 5.3. A relying party MUST reject a request whose `Groundmark-Claim` header field is present but not covered.
+Whenever a Groundmark-Claim header field is present, the request signature MUST cover the `groundmark-claim` component, as required by Section 5.3. A relying party MUST reject a request whose Groundmark-Claim header field is present but not covered.
 
 #### 5.7.3. Binding to DNS
 
@@ -540,7 +540,7 @@ After request-signature verification succeeds and before any attestation is fetc
 2. If the record carries `claim=`, it is equal to the presented `claim-type`.
 3. If the record carries `idsp=` and the header carries `idsp`, the two are equal.
 
-If no record matches, or if validation of the `_agentclaim` RRset fails under Section 7.1, the presented claim MUST be rejected and the relying party MUST NOT fetch the presented URL. If a matching record is found, the relying party proceeds to fetch and verify the attestation under [I-D.noss-jeftovic-groundmark-attestation], which additionally binds the signed attestation payload to the record and to the presented values.
+If no record matches, if more than one record matches, or if validation of the `_agentclaim` RRset fails under Section 7.1, the presented claim MUST be rejected and the relying party MUST NOT fetch the presented URL. If a matching record is found, the relying party proceeds to fetch and verify the attestation under [I-D.noss-jeftovic-groundmark-attestation], which additionally binds the signed attestation payload to the record and to the presented values.
 
 The presented claim MUST be the claim that satisfies the relying party's policy. A relying party MUST NOT accept a request on the strength of a different attestation, whether presented or discovered, when its policy required the presented claim type.
 
@@ -550,18 +550,18 @@ A presented `ref` that matches a committed claim reference is confidential. Rely
 
 ### 5.8. The Groundmark-Accept Header Field
 
-A relying party advertises that it evaluates Groundmark attestations, and which claim types can satisfy its policy at the target resource, by including a `Groundmark-Accept` header field in a response. The field exists so that an agent can learn what to present before its first signed request, which is necessary for committed claim references (Section 4.2) and useful for open ones.
+A relying party advertises that it evaluates Groundmark attestations, and which claim types can satisfy its policy at the target resource, by including a Groundmark-Accept header field in a response. The field exists so that an agent can learn what to present before its first signed request, which is necessary for committed claim references (Section 4.2) and useful for open ones.
 
-The field divides the work with `Accept-Signature` [RFC9421]. `Accept-Signature` tells the agent how to sign: which components to cover, which key and algorithm to use, and which nonce to echo. `Groundmark-Accept` tells the agent what to present: which claim types, at what minimum level, and from which issuers, can contribute to satisfying policy. Neither field carries what the other does.
+The field divides the work with Accept-Signature [RFC9421]. Accept-Signature tells the agent how to sign: which components to cover, which key and algorithm to use, and which nonce to echo. Groundmark-Accept tells the agent what to present: which claim types, at what minimum level, and from which issuers, can contribute to satisfying policy. Neither field carries what the other does.
 
 #### 5.8.1. Syntax
 
-`Groundmark-Accept` is a List Structured Field [RFC9651]. Each member is a Token naming a claim type as defined by `claim-type` in Section 4.2.1, with the following OPTIONAL Parameters:
+Groundmark-Accept is a List Structured Field [RFC9651]. Each member is a Token naming a claim type as defined by `claim-type` in Section 4.2.1, with the following OPTIONAL Parameters:
 
 - `level`: an Integer from 0 to 3, the minimum attestation level the relying party accepts for this claim type. Absent means any level.
 - `idsp`: a String carrying an IDSP domain the relying party authorizes for this claim type. A claim type accepted from several issuers is listed once per issuer. Absent means the relying party does not disclose its issuer authorization in this field.
 
-Example:
+The following non-normative example advertises three claim types, one of them restricted to a single issuer:
 
 ```http
 Groundmark-Accept: operator-verified;level=1, \
@@ -574,21 +574,21 @@ A receiver MUST ignore members whose Token it does not recognize as a claim type
 
 Presence of the field states that the relying party implements this document and evaluates attestations under [I-D.noss-jeftovic-groundmark-attestation] for the target resource. Each member states that an attestation of that claim type, meeting the stated level and issuer constraints, can contribute to satisfying the relying party's policy for that resource. The field does not state whether the listed claim types are alternatives or are all required, and does not state the relying party's full policy; those remain relying-party enforcement decisions applied to the request.
 
-A relying party MUST include `Groundmark-Accept` in any 401 or 403 response that rejects a request because no acceptable attestation was presented. It SHOULD include the field in 402 responses so that payment and identity requirements are learned in one round trip. It MAY include the field in any other response, including successful responses, as a standing advertisement. When the field accompanies a challenge, the response MUST also carry an `Accept-Signature` field listing `groundmark-claim` among the requested covered components, together with a `nonce` parameter when the state-changing profile of Section 5.5.2 applies.
+A relying party MUST include Groundmark-Accept in any 401 or 403 response that rejects a request because no acceptable attestation was presented. It SHOULD include the field in 402 responses so that payment and identity requirements are learned in one round trip. It MAY include the field in any other response, including successful responses, as a standing advertisement. When the field accompanies a challenge, the response SHOULD also carry an Accept-Signature header field listing `groundmark-claim` among the requested covered components, together with a `nonce` parameter when the state-changing profile of Section 5.5.2 applies.
 
 An advertisement is not a commitment. A relying party MUST enforce its policy on the signed request regardless of what it advertised, and an agent MUST NOT treat a listed claim type as a guarantee of acceptance.
 
-A relying party that implements only Level 0 request authentication does not send `Groundmark-Accept`; it uses `Accept-Signature` alone.
+A relying party that implements only Level 0 request authentication does not send Groundmark-Accept; it uses Accept-Signature alone.
 
-#### 5.8.3. Holder Processing
+#### 5.8.3. Agent Processing
 
-`Groundmark-Accept` is advisory input to the holder, not an instruction. An agent receiving the field MUST apply the operator's disclosure policy for the target authority before presenting any claim. In particular, an agent MUST NOT present a claim published as a committed claim reference solely because a relying party listed its type; the operator's policy for that authority governs whether a committed claim may be disclosed there at all.
+Groundmark-Accept is advisory input to the agent, not an instruction. An agent receiving the field MUST apply the operator's disclosure policy for the target authority before presenting any claim. In particular, an agent MUST NOT present a claim published as a committed claim reference solely because a relying party listed its type; the operator's policy for that authority governs whether a committed claim may be disclosed there at all.
 
 Within what policy permits, the agent SHOULD present the single claim that is least disclosing among those matching the advertisement, consistent with the one-claim limit of Section 5.7.1 and the minimum-necessary principle of Section 1.1. An agent that holds no matching claim it is permitted to present proceeds with Level 0 request authentication alone and lets the relying party decide.
 
 #### 5.8.4. Integrity and Caching
 
-`Groundmark-Accept` is protected in transit by TLS but is not otherwise signed unless the relying party signs its responses under [RFC9421]. A stripped or absent field causes the agent to behave as though no attestation were accepted, which is the same outcome as a relying party that does not implement this document. A party able to inject the field into a response already controls the authority the agent is talking to; the holder-processing rules of Section 5.8.3 are what limit the effect of such a relying party's advertisement.
+Groundmark-Accept is protected in transit by TLS but is not otherwise signed unless the relying party signs its responses under [RFC9421]. A stripped or absent field causes the agent to behave as though no attestation were accepted, which is the same outcome as a relying party that does not implement this document. A party able to inject the field into a response already controls the authority the agent is talking to; the agent-processing rules of Section 5.8.3 are what limit the effect of such a relying party's advertisement.
 
 The field describes the policy of the target resource, not of the requester, and MAY appear on cacheable responses without a corresponding `Vary` entry.
 
@@ -676,9 +676,9 @@ A committed claim reference does not provide confidentiality against the relying
 
 ### 7.5. Subdomain Takeover and Endpoint Decommissioning
 
-`ref=` URLs are embedded in DNS TXT records and may be cached by relying parties. If an IDSP decommissions a subdomain referenced by outstanding attestations without first invalidating those attestations, a third party who later acquires the subdomain could serve fraudulent attestations at existing URLs. To mitigate this:
+`ref=` URLs, or their digests, are embedded in DNS TXT records, and the URLs may be cached by relying parties. If an IDSP decommissions a subdomain referenced by outstanding attestations without first invalidating those attestations, a third party who later acquires the subdomain could serve fraudulent attestations at existing URLs. To mitigate this:
 
-- IDSPs MUST NOT release a hostname used in attestation `ref=` URLs until all attestations referencing that hostname have either expired (per `exp=` in their `_agentclaim` records) or been explicitly revoked.
+- IDSPs MUST NOT release a hostname used in attestation `ref=` URLs until all attestations referencing that hostname have either expired (per `exp=` in their `_agentclaim` records where present, or per the attestation's own expiry) or been explicitly revoked.
 - IDSPs SHOULD serve HTTP 410 Gone responses at decommissioned attestation paths for a minimum of 90 days before releasing the hostname.
 - Relying parties MUST treat a TLS certificate change or unreachable endpoint at a previously valid `ref=` URL as cause for re-checking the corresponding `_agentclaim` record and the IDSP's identity-discovery records.
 
@@ -741,7 +741,7 @@ This is a recommendation, not a normative requirement; nothing in this specifica
 
 The protocol publishes only public keys in `_agentid` and only attestation references (not values) in `_agentclaim`. The attestation framework specified in the companion document is built around minimal disclosure: attestation values are bounded predicates such as "the operator is over 18", not the underlying personal data.
 
-Committed claim references extend selective disclosure from the content of a claim to its existence. Because a committed claim is evaluated only when presented, the agent, and through it the operator, decides per request which relying party learns of the claim at all. This is the property that the `Groundmark-Claim` header field exists to provide.
+Committed claim references extend selective disclosure from the content of a claim to its existence. Because a committed claim is evaluated only when presented, the agent, and through it the operator, decides per request which relying party learns of the claim at all. This is the property that the Groundmark-Claim header field exists to provide.
 
 ### 8.4. Resolver-Side Observation
 
@@ -753,7 +753,7 @@ Committed claim references do not add to this exposure. The names queried are th
 
 A committed claim reference is invisible to a relying party until the agent presents it. This is the intended privacy property, and it has a direct operational cost that operators choosing the committed form accept: a relying party cannot evaluate a committed claim before the agent's first request, cannot pre-screen a counterparty on the strength of it, and cannot discover which claim types an agent holds in order to decide which to require. Third-party reputation or monitoring services likewise cannot observe committed claims.
 
-A relying party whose policy requires a specific claim type therefore has to communicate that requirement to the agent before the agent can present a committed claim satisfying it. The `Groundmark-Accept` header field of Section 5.8 is the mechanism for that, at the cost of one additional round trip when the agent did not already hold the advertisement. Operators SHOULD still publish as open claim references any claims that relying parties are expected to require without prior negotiation, since an open reference can be evaluated with no round trip at all.
+A relying party whose policy requires a specific claim type therefore has to communicate that requirement to the agent before the agent can present a committed claim satisfying it. The Groundmark-Accept header field of Section 5.8 is the mechanism for that, at the cost of one additional round trip when the agent did not already hold the advertisement. Operators SHOULD still publish as open claim references any claims that relying parties are expected to require without prior negotiation, since an open reference can be evaluated with no round trip at all.
 
 The advertisement is itself a disclosure surface in the other direction. A relying party can list every claim type it knows of in order to learn which committed claims an agent holds, and an agent that presented whatever was asked for would reveal exactly what the committed form was meant to withhold. That is why Section 5.8.3 makes the advertisement advisory and puts the operator's per-authority disclosure policy ahead of it.
 
@@ -801,9 +801,9 @@ Several other DNS-anchored agent-discovery proposals exist as Internet-Drafts at
 
 ### 10.6. AAuth
 
-[I-D.hardt-oauth-aauth-protocol] defines an agent authorization protocol in which each agent instance holds an identifier of the form `aauth:local@domain` bound to a signing key discovered over HTTPS, signs requests with [RFC9421], and obtains identity claims and delegated authorization through tokens issued by a person server or access server. Claims in AAuth travel only inside those tokens and are never published; a resource states what it requires through an `AAuth-Requirement` response field.
+[I-D.hardt-oauth-aauth-protocol] defines an agent authorization protocol in which each agent instance holds an identifier of the form `aauth:local@domain` bound to a signing key discovered over HTTPS, signs requests with [RFC9421], and obtains identity claims and delegated authorization through tokens issued by a person server or access server. Claims in AAuth travel only inside those tokens and are never published; a resource states what it requires through an AAuth-Requirement header field.
 
-Groundmark's `Groundmark-Accept` field plays the corresponding role for attestations, and the committed claim reference of Section 4.2 gives an operator the same choice AAuth makes by default, that a claim is disclosed only to the party it is presented to. The two protocols differ in what they anchor: AAuth anchors the key in an HTTPS endpoint under the agent's domain, Groundmark anchors it in DNSSEC-signed DNS at that domain and adds third-party attestations about the operator. Because an AAuth identifier already names a domain, an agent using AAuth can publish Groundmark records at that domain and a resource can evaluate them alongside AAuth tokens. The protocols are composable rather than competing.
+Groundmark's Groundmark-Accept header field plays the corresponding role for attestations, and the committed claim reference of Section 4.2 gives an operator the same choice AAuth makes by default, that a claim is disclosed only to the party it is presented to. The two protocols differ in what they anchor: AAuth anchors the key in an HTTPS endpoint under the agent's domain; Groundmark anchors it in DNSSEC-signed DNS at that domain and adds third-party attestations about the operator. Because an AAuth identifier already names a domain, an agent using AAuth can publish Groundmark records at that domain and a resource can evaluate them alongside AAuth tokens. The protocols are composable rather than competing.
 
 ## 11. IANA Considerations
 
@@ -826,12 +826,14 @@ This document does not define new entries in the "HTTP Signature Algorithms" reg
 
 ### 11.3. HTTP Field Name Registration
 
-IANA is requested to add the following entry to the "Hypertext Transfer Protocol (HTTP) Field Name Registry" defined in [RFC9110]:
+IANA is requested to add the following entries to the "Hypertext Transfer Protocol (HTTP) Field Name Registry" defined in [RFC9110]:
 
 | Field Name        | Status    | Reference                  |
 | ----------------- | --------- | -------------------------- |
 | Groundmark-Claim  | permanent | This document, Section 5.7 |
 | Groundmark-Accept | permanent | This document, Section 5.8 |
+
+*Table 2: Groundmark HTTP field name registrations*
 
 ## 12. References
 
@@ -844,8 +846,8 @@ IANA is requested to add the following entry to the "Hypertext Transfer Protocol
 - **[RFC8032]** — Josefsson, S. and I. Liusvaara, "Edwards-Curve Digital Signature Algorithm (EdDSA)", RFC 8032, January 2017, <https://www.rfc-editor.org/rfc/rfc8032>.
 - **[RFC8174]** — Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words", BCP 14, RFC 8174, May 2017, <https://www.rfc-editor.org/rfc/rfc8174>.
 - **[RFC8552]** — Crocker, D., "Scoped Interpretation of DNS Resource Records through \"Underscored\" Naming of Attribute Leaves", BCP 222, RFC 8552, March 2019, <https://www.rfc-editor.org/rfc/rfc8552>.
-- **[RFC9421]** — Backman, A., Ed., Richer, J., Ed., and M. Sporny, "HTTP Message Signatures", RFC 9421, February 2024, <https://www.rfc-editor.org/rfc/rfc9421>.
 - **[RFC9110]** — Fielding, R., Ed., Nottingham, M., Ed., and J. Reschke, Ed., "HTTP Semantics", STD 97, RFC 9110, June 2022, <https://www.rfc-editor.org/rfc/rfc9110>.
+- **[RFC9421]** — Backman, A., Ed., Richer, J., Ed., and M. Sporny, "HTTP Message Signatures", RFC 9421, February 2024, <https://www.rfc-editor.org/rfc/rfc9421>.
 - **[RFC9530]** — Polli, R. and L. Pardue, "Digest Fields", RFC 9530, February 2024, <https://www.rfc-editor.org/rfc/rfc9530>.
 - **[RFC9651]** — Nottingham, M. and P-H. Kamp, "Structured Field Values for HTTP", RFC 9651, September 2024, <https://www.rfc-editor.org/rfc/rfc9651>.
 
@@ -853,7 +855,7 @@ IANA is requested to add the following entry to the "Hypertext Transfer Protocol
 
 - **[Cameron2005]** — Cameron, K., "The Laws of Identity", May 2005, <https://www.identityblog.com/?p=352>.
 - **[I-D.hardt-oauth-aauth-protocol]** — Hardt, D., "AAuth Protocol", Work in Progress, Internet-Draft, draft-hardt-oauth-aauth-protocol-10, August 2026, <https://datatracker.ietf.org/doc/draft-hardt-oauth-aauth-protocol/>.
-- **[I-D.noss-jeftovic-groundmark-attestation]** — Noss, E. and M. Jeftovic, "Groundmark Attestation Framework and Identity Service Provider Profile", Work in Progress, Internet-Draft, draft-noss-jeftovic-groundmark-attestation-00, 2026, <https://datatracker.ietf.org/doc/html/draft-noss-jeftovic-groundmark-attestation-00>.
+- **[I-D.noss-jeftovic-groundmark-attestation]** — Noss, E. and M. Jeftovic, "Groundmark Attestation Framework and Identity Service Provider Profile", Work in Progress, Internet-Draft, draft-noss-jeftovic-groundmark-attestation-01, 2026, <https://datatracker.ietf.org/doc/html/draft-noss-jeftovic-groundmark-attestation-01>.
 - **[IoDNS]** — Jeftovic, M., "Intelligence-over-DNS (IoDNS)", 2025, <https://github.com/easydns/iodns>.
 - **[RFC6376]** — Crocker, D., Ed., Hansen, T., Ed., and M. Kucherawy, Ed., "DomainKeys Identified Mail (DKIM) Signatures", STD 76, RFC 6376, September 2011, <https://www.rfc-editor.org/rfc/rfc6376>.
 - **[RFC6973]** — Cooper, A., Tschofenig, H., Aboba, B., Peterson, J., Morris, J., Hansen, M., and R. Smith, "Privacy Considerations for Internet Protocols", RFC 6973, July 2013, <https://www.rfc-editor.org/rfc/rfc6973>.
@@ -880,10 +882,10 @@ The authors thank Doc Searls for substantive review of earlier drafts, and the b
 - Strengthened the DNSSEC resolver profile, including authenticated resolver-channel requirements and fatal handling for insecure, bogus, indeterminate, timeout, transport, and validation-error results.
 - Added security considerations for domain expiry, re-registration, registrar compromise, current-key provenance, and operator assurance boundaries.
 - Added committed claim references: an `_agentclaim` `ref=` value may carry a SHA-256 digest of the attestation URL instead of the URL, with `claim=` and `idsp=` optional in that form, so that a claim's existence, issuer, and content are disclosed only to relying parties the agent presents it to.
-- Defined the `Groundmark-Claim` header field, previously referenced but unspecified, including its syntax, mandatory signature coverage, binding to open and committed `_agentclaim` records before any fetch, and reference hygiene.
+- Defined the Groundmark-Claim header field, previously referenced but unspecified, including its syntax, mandatory signature coverage, binding to open and committed `_agentclaim` records before any fetch, and reference hygiene.
 - Added privacy considerations on the trade-off between committed references and pre-contact evaluation, and on why the secret lives in the HTTPS path rather than a DNS name.
-- Defined the `Groundmark-Accept` response header field, a Structured Fields list of claim types with optional level and issuer parameters, through which a relying party advertises which attestations can satisfy its policy; made it advisory to the holder and subordinate to the operator's per-authority disclosure policy.
-- Specified nonce delivery through the `Accept-Signature` response field of RFC 9421, which was previously unspecified.
+- Defined the Groundmark-Accept response header field, a List Structured Field of claim types with optional level and issuer parameters, through which a relying party advertises which attestations can satisfy its policy; made it advisory to the agent and subordinate to the operator's per-authority disclosure policy.
+- Specified nonce delivery through the Accept-Signature header field of RFC 9421, which was previously unspecified.
 - Added AAuth to related work.
 
 ### -00
