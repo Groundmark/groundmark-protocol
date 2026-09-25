@@ -68,6 +68,8 @@ export interface RequestVerdictOk {
   ok: true;
   agentDomain: string;
   keyid: string;
+  /** Exact authenticated request-signing key, for key-bound attestation checks. */
+  publicKeyB64url: string;
   kid?: string;
   created: number;
   expires?: number;
@@ -315,6 +317,7 @@ async function run(
     ok: true,
     agentDomain: resolved.domain,
     keyid: keyidStr,
+    publicKeyB64url: resolved.publicKey.export({format:"jwk"}).x!,
     created,
     ttl: resolved.ttl,
   };

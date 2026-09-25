@@ -93,3 +93,9 @@ export { base64urlToBytes, bytesToBase64url, base64ToBytes } from "./encoding.ts
 export { parseAgentIdRecord, assertMultiRecordValidity } from "./dns/agentidRecord.ts";
 export type { AgentIdRecord } from "./dns/agentidRecord.ts";
 export type { SignatureInputEntry } from "./rfc9421/parse.ts";
+
+// Explicit 1.1 API: legacy entry points above do not silently upgrade or downgrade.
+export { verifyAttestation11, Verification11Error, MemoryStatusHistory, digest11, keyThumbprint11 } from "./v11/verify.ts";
+export type { Verify11Context, StatusHistory, StatusObservation, IssuerKey } from "./v11/verify.ts";
+export { verifyPresentedRequest11 } from "./v11/request.ts";
+export type { VerifyPresentedRequest11Options } from "./v11/request.ts";
