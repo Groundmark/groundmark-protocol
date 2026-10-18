@@ -129,3 +129,29 @@ test('signed presentation binds the actual request key and consumes nonce only a
   assert.equal(result.request.publicKeyB64url,manifest.subject_key.public_key);assert.equal(consumed,true);
   await rejects(verifyPresentedRequest11(raw,options),'nonce_replayed');
 });
+
+test('same-day duration uses a date upper bound while signed expiry stays exact',async()=>{
+  const { verifyPresentedRequest11 }=await import('../src/v11/request.ts');
+  const h=setup();
+  const start=Date.parse('2026-07-16T14:00:00Z')/1000;
+  const attSeed=Buffer.from('Zgdt2Jjlbxv95gfObZtUNLJeLRbJjC--jdFcQW4_mXo','base64url');
+  const att=signed({...h.att,issued_at:'2026-07-16T14:00:00Z',expires_at:'2026-07-16T14:05:00Z'},attSeed);
+  h.fetcher.setJson(h.att.endpoint_url,att);
+  h.fetcher.setJson(h.att.status_url,signed({...h.status,attestation_digest:digest11(jcsBytes(att)),
+    this_update:'2026-07-16T14:00:00Z',next_update:'2026-07-16T14:05:00Z'}));
+  h.resolver.setSecure(`_agentid.${h.att.subject}`,{records:[`v=gm1; k=ed25519; p=${manifest.subject_key.public_key}`]});
+  const dns=(exp:string)=>h.resolver.setSecure(`_agentclaim.${h.att.subject}`,{records:[`v=gm1; claim=operator-verified; idsp=trustedweb.com; ref=${h.att.endpoint_url}; exp=${exp}`]});
+  const header=`claim-type="operator-verified"; ref="${h.att.endpoint_url}"`;
+  const raw=(now:number)=>{
+    const params=`("@method" "@authority" "@target-uri" "groundmark-claim");created=${now};keyid="${h.att.subject}";alg="ed25519"`;
+    const base=`"@method": GET\n"@authority": relying.example\n"@target-uri": https://relying.example/check\n"groundmark-claim": ${header}\n"@signature-params": ${params}`;
+    const signature=sign(null,Buffer.from(base),privateKey(Buffer.from('yZa0s0viLdgl9BMTMXJiwEheURaJkfSXVaNYokUOuO4','base64url'))).toString('base64');
+    return Buffer.from(`GET /check HTTP/1.1\r\nHost: relying.example\r\nGroundmark-Claim: ${header}\r\nSignature-Input: gm=${params}\r\nSignature: gm=:${signature}:\r\n\r\n`);
+  };
+  dns('2026-07-16');
+  await rejects(verifyPresentedRequest11(raw(start+60),{...h.ctx,now:start+60,requestOptions:{}}),'claim_exp_passed');
+  dns('2026-07-17');
+  await verifyPresentedRequest11(raw(start+299),{...h.ctx,now:start+299,requestOptions:{}});
+  for(const now of [start+300,start+301])
+    await rejects(verifyPresentedRequest11(raw(now),{...h.ctx,now,requestOptions:{}}),'attestation_expired');
+});
