@@ -15,12 +15,22 @@ library's runtime.
 
 ## Authoritative sources
 
-The two Internet-Drafts in the repo root are the source of truth. Where this PoC and a
-draft disagree, **the draft wins**:
+**The protocol is [`spec/groundmark-protocol.md`](../spec/groundmark-protocol.md).** Where this PoC
+and the spec disagree, **the spec wins**.
 
-- `draft-noss-jeftovic-groundmark-core-00.md` — DNS record wire formats (§4),
+This PoC predates the spec's port onto W3C DID/VC (16 November 2026) and implements the
+**retired** model: schema 1.0 JSON attestations signed with Ed25519 over JCS, open
+`_agentclaim` references, and a revocation endpoint. Its Level 0 path (RFC 9421 request
+signing, `_agentid` key resolution, DNSSEC resolver seam, nonce handling) matches the spec
+(§4.1, §4.3, §5). The credential path (`_idsp` host check, SD-JWT credentials, `did:web`
+cross-check, Token Status List) is not yet ported; see spec §18 for the legacy window.
+
+For the section references below, the submitted -00 drafts in the repo root describe the
+model this PoC was built to:
+
+- `draft-noss-jeftovic-groundmark-core-00.md`: DNS record wire formats (§4),
   request authentication via RFC 9421 (§5). Worked example §3.1.
-- `draft-noss-jeftovic-groundmark-attestation-00.md` — attestation JSON schema (§6),
+- `draft-noss-jeftovic-groundmark-attestation-00.md`: attestation JSON schema (§6),
   claim vocabulary (§5), signature construction (§7). Worked example §6.4.
 
 ## Run and verify vs. regenerate
@@ -112,7 +122,7 @@ signature, then check the revocation endpoint.
 
 ## Open spec items to confirm (drafts disagree with each other / with the registry)
 
-1. **Custom claim-type ABNF conflict.** The attestation draft (§5) writes custom claim
+1. **Custom claim-type ABNF conflict** (closed by the spec, §14.1: custom types are now type URIs). The attestation draft (§5) writes custom claim
    types as `x-<registrant-domain>-<claim-name>` (implying dots, e.g. `registry.example`), but the
    core draft's `x-token` ABNF permits only letters/digits/hyphens — **no dots**. This PoC
    uses `x-registry-example-canadian-presence` (dots → hyphens). Elliot/Mark need to reconcile the
