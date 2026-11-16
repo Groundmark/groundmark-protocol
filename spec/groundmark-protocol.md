@@ -6,7 +6,7 @@
 |---|---|
 | Version | Draft for review, 16 November 2026 |
 | Editors | Elliot Noss (Groundmark), Mark Jeftovic (easyDNS) |
-| Basis | Groundmark Translation Map v1.0, 16 November 2026, with Elliot's D12 ruling of the same day |
+| Basis | Groundmark Translation Map v1.1, 16 November 2026, which includes Elliot's D12 decision |
 | Replaces | The unsubmitted working texts now in `archive/` and, on submission of the IETF -01, `draft-noss-jeftovic-groundmark-core-00` and `draft-noss-jeftovic-groundmark-attestation-00` |
 | Status | Not yet reviewed by Mark. Items marked **Open** are not decided. Items marked `TODO(verify)` cite something not yet checked against its source. |
 
@@ -304,7 +304,7 @@ Groundmark profiles HTTP Message Signatures [RFC9421]. The signature base, `Sign
 
 - Agents MUST support Ed25519 [RFC8032], identified as `ed25519` in the HTTP Signature Algorithms registry [RFC9421].
 - Agents MAY use ECDSA P-256, identified as `ecdsa-p256-sha256` [RFC9421], once its `_agentid` encoding is settled (Section 19.2).
-- Relying parties MUST support both.
+- Relying parties MUST support Ed25519. **Open (Section 19.6):** whether relying parties are also required to accept `ecdsa-p256-sha256`. Until that is settled, a P-256 agent can be rejected by a conforming relying party.
 
 ### 5.2. Key Identification
 
@@ -582,7 +582,7 @@ The verifier MUST compare `cnf.jkt` with the thumbprint of the exact key that ve
 
 ### 8.6. Algorithms
 
-This section records Elliot's ruling of 16 November 2026, which governs over map v1.0's D12 recommendation.
+This section records Elliot's D12 decision of 16 November 2026, as stated in map v1.1.
 
 | Key | Signs | Rule |
 |---|---|---|
@@ -592,7 +592,11 @@ This section records Elliot's ruling of 16 November 2026, which governs over map
 
 Ed25519 is the default on its merits: deterministic signing, small keys in DNS, the RFC 9421 and Web Bot Auth convention, and shipped code. The EU preference for P-256 comes from secure hardware and certification, and today Groundmark credentials are verified by Groundmark verifiers. ES256 is the specific exception for EU interoperability. The accepted trade: an IDSP picks its algorithm when it signs, without knowing who will verify; if EU interoperability becomes the common case, Groundmark carries two algorithms for good.
 
-`TODO(verify)`: the JOSE `alg` value for Ed25519 in an SD-JWT. It is either `EdDSA` [RFC8037] or the fully specified `Ed25519` from RFC 9864. Check before this is fixed; verifiers may need to accept both.
+**JOSE `alg` values.** An IDSP signing with Ed25519 MUST write `"alg": "Ed25519"`, the fully specified identifier registered by RFC 9864 [RFC9864], which deprecates `EdDSA` [RFC8037]. Because `EdDSA` was the only value for years, verifiers MUST also accept `"alg": "EdDSA"` when the key is an Ed25519 key, and MUST NOT accept `EdDSA` for any other key. An IDSP signing with ES256 writes `"alg": "ES256"`.
+
+`TODO(verify)`: that the libraries the reference stack uses, `jose` and `@sd-jwt/core`, accept `"alg": "Ed25519"` today.
+
+**What an Ed25519-signed credential will not do:** verify in HAIP or FIDES tooling, which expects ES256. That is the exception the SHOULD is for, and an IDSP serving EU relying parties needs to know it before it issues.
 
 To test, not assume: that a HAIP or FIDES verifier reading a Groundmark credential accepts an Ed25519 key inside `cnf`. It should, since there is no Key Binding JWT for it to check. If it does not, the agent uses a P-256 key, which is why P-256 is allowed.
 
@@ -602,7 +606,7 @@ The decoded JWS header and payload of an `operator-verified` credential. The dis
 
 ```json
 {
-  "alg": "TODO(verify): EdDSA or Ed25519",
+  "alg": "Ed25519",
   "typ": "vc+sd-jwt",
   "kid": "did:web:verify.example.net#cred-2026-11"
 }
@@ -1069,7 +1073,7 @@ These are open, not decided.
 
 Under this design every claim reaches a relying party by presentation, and Section 6.1.1 allows one reference per request. A policy that needs two claims together cannot be met in one request.
 
-Recommendation in map v1.0, for Mark's view: one reference resolves to the bundle of credentials the IDSP will release to that relying party, which is the IDSP being accountable for the bundle; and the header may carry one reference per IDSP, for agents with more than one. Questions the design must settle include: whether a bundle is a Verifiable Presentation signed by the IDSP as `holder` (Section 13.3) or several SD-JWTs in one response; how `claim-type` is expressed for a bundle; how the four bindings apply to each member; and whether more than one `Groundmark-Claim` field, or a list in one field, carries several references.
+Recommendation in map v1.1, for Mark's view: one reference resolves to the bundle of credentials the IDSP will release to that relying party, which is the IDSP being accountable for the bundle; and the header may carry one reference per IDSP, for agents with more than one. Questions the design must settle include: whether a bundle is a Verifiable Presentation signed by the IDSP as `holder` (Section 13.3) or several SD-JWTs in one response; how `claim-type` is expressed for a bundle; how the four bindings apply to each member; and whether more than one `Groundmark-Claim` field, or a list in one field, carries several references.
 
 ### 19.2. P-256 Key Encoding in `_agentid` (Mark)
 
@@ -1081,11 +1085,15 @@ Section 18 needs a date on which legacy formats and `_agentclaim` reading end.
 
 ### 19.4. Gated-Mode Relying Party Authentication
 
-Map v1.0 names a gated mode but does not specify how the relying party authenticates. Section 7.2 proposes RFC 9421 signing under the relying party's own `_agentid`. This is proposed text, not a decision.
+Map v1.1 names a gated mode but does not specify how the relying party authenticates. Section 7.2 proposes RFC 9421 signing under the relying party's own `_agentid`. This is proposed text, not a decision.
 
 ### 19.5. Claim-Type Names
 
 The short names and credential type names in Section 14 (`OperatorVerifiedCredential`, `AgeOverCredential`, `CanadianPresenceCredential`) and the Groundmark context URL are proposed, not decided.
+
+### 19.6. P-256 Request Signatures at Verifiers
+
+Agents MAY sign requests with P-256 (`ecdsa-p256-sha256`), but map v1.1 requires verifiers to accept only Ed25519 for requests. If verifiers are not also required to accept `ecdsa-p256-sha256`, a P-256 agent can be rejected by a conforming verifier, which matters most for the agents that use P-256 to satisfy EU tooling (Section 8.6). Not decided: either require verifiers to accept both for requests, as they must for credentials, or keep P-256 as a bilateral option and say so.
 
 ---
 
@@ -1107,7 +1115,7 @@ Groundmark composes with these; it does not compete with them.
 
 ## 21. References
 
-`TODO(verify)` items in this list are also collected in Appendix D. Section numbers cited in the text are as verified in the 7 November 2026 landscape survey and in map v1.0, except where marked.
+`TODO(verify)` items in this list are also collected in Appendix D. Section numbers cited in the text are as verified in the 7 November 2026 landscape survey and in map v1.1, except where marked.
 
 ### 21.1. Normative
 
@@ -1126,12 +1134,12 @@ Groundmark composes with these; it does not compete with them.
 - **[RFC9530]** Polli, R. and L. Pardue, "Digest Fields", RFC 9530.
 - **[RFC9651]** Nottingham, M. and P-H. Kamp, "Structured Field Values for HTTP", RFC 9651.
 - **[RFC9901]** "Selective Disclosure for JSON Web Tokens" (SD-JWT), RFC 9901. `TODO(verify)`: authors and date for the full citation.
-- **[RFC9864]** Cited for the fully specified `Ed25519` JOSE algorithm. `TODO(verify)`: title, authors, and whether it governs the `alg` value used here (Section 8.6).
+- **[RFC9864]** "Fully-Specified Algorithms for JOSE and COSE", RFC 9864, Proposed Standard, October 2025.
 - **[VCDM2]** W3C, "Verifiable Credentials Data Model v2.0".
 - **[VC-JOSE-COSE]** W3C, "Securing Verifiable Credentials using JOSE and COSE".
 - **[VC-JSON-SCHEMA]** W3C, "Verifiable Credentials JSON Schema Specification".
 - **[CID]** W3C, "Controlled Identifiers v1.0".
-- **[DID-WEB]** W3C Credentials Community Group, "did:web Method Specification". `TODO(verify)`: current status; the W3C DID Methods WG had not been confirmed as launched (map v1.0, section 7).
+- **[DID-WEB]** W3C Credentials Community Group, "did:web Method Specification". `TODO(verify)`: current status; the W3C DID Methods WG had not been confirmed as launched (map v1.1, section 7).
 - **[TOKEN-STATUS-LIST]** "Token Status List", draft-ietf-oauth-status-list-21. `TODO(verify)`: RFC status.
 
 ### 21.2. Informative
@@ -1263,7 +1271,7 @@ VCDM 2.0 secured as SD-JWT has few implementers in the W3C test reports, against
 
 ## Appendix C. Disposition of the Earlier Texts
 
-Map v1.0 sections 4, 6 and 9 hold the full table. In summary:
+Map v1.1 sections 4, 6 and 9 hold the full table. In summary:
 
 - **Kept as residue:** `_agentid` and its processing; DNSSEC resolver profile; RFC 9421 profile including nonce delivery in `Accept-Signature`; `Groundmark-Claim` syntax; `Groundmark-Accept`; reference hygiene; fetch hardening; claim subject; method execution fields; the four bindings; key rotation and identity reset; terminality of revocation; AAuth related work; failure codes, now informative.
 - **Adopted:** payload format, signature and canonicalization (VCDM 2.0, SD-JWT); IDSP key publication (`did:web`, cross-checked); status (Token Status List); issuer authorization (TRQP); underscore label registration (RFC 8552); HTTP field registration (RFC 9110), both in the IETF -01.
@@ -1278,9 +1286,9 @@ Map v1.0 sections 4, 6 and 9 hold the full table. In summary:
 
 Every `TODO(verify)` in this document:
 
-1. JOSE `alg` value for Ed25519 in SD-JWT: `EdDSA` [RFC8037] or `Ed25519` [RFC9864] (Sections 8.6, 8.7).
+1. That `jose` and `@sd-jwt/core` accept `"alg": "Ed25519"` (RFC 9864) today (Section 8.6).
 2. JWS `typ` value required by VC-JOSE-COSE §3.2 (Section 8.7).
-3. VCDM 2.0 section numbers §4.3, §4.4, §4.5 (contexts, identifiers, types), from memory in map v1.0 (Section 8.2), and §6.3 for type-specific processing (Section 8.1).
+3. VCDM 2.0 section numbers §4.3, §4.4, §4.5 (contexts, identifiers, types), from memory in the map (Section 8.2), and §6.3 for type-specific processing (Section 8.1).
 4. How Token Status List's `status` claim sits alongside VCDM 2.0 `credentialStatus` in a VC-JOSE-COSE credential (Section 8.2).
 5. Whether Token Status List has an RFC number; pinned to -21 meanwhile (Section 12.1).
 6. Groundmark `@context` URL, not yet published (Section 8.2).
@@ -1293,5 +1301,5 @@ Every `TODO(verify)` in this document:
 13. What the production verifier and the live reference IDSP run today, schema 1.0 or 1.1 (Section 18).
 14. That the IIW live path used open references (Section 18).
 15. SD-JWT VC mapping rows and draft revision (Appendix B, [SD-JWT-VC]).
-16. Full citations for RFC 9901, RFC 9864, RFC 9943, and the draft-ranjbar-dane-did revision (Section 21).
+16. Full citations for RFC 9901, RFC 9943, and the draft-ranjbar-dane-did revision (Section 21).
 17. To test: that HAIP or FIDES verifiers accept an Ed25519 key in `cnf` (Section 8.6).

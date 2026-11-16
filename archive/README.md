@@ -1,6 +1,6 @@
 # Archive
 
-Working texts that were never submitted to the IETF, kept for the record. They are not normative and are superseded by [`spec/groundmark-protocol.md`](../spec/groundmark-protocol.md), which ports Groundmark onto W3C DID/VC under Translation Map v1.0 (16 November 2026).
+Working texts that were never submitted to the IETF, kept for the record. They are not normative and are superseded by [`spec/groundmark-protocol.md`](../spec/groundmark-protocol.md), which ports Groundmark onto W3C DID/VC under Translation Map v1.1 (16 November 2026).
 
 | File | Was | Last state |
 |---|---|---|
