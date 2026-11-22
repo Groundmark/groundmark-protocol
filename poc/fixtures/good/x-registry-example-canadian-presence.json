@@ -21,8 +21,8 @@
       "postal-address"
     ]
   },
-  "endpoint_url": "https://idsp.groundmark-poc.example/a/sJQ7EFtRLmur1mHYMmd1Aw",
-  "revocation_endpoint": "https://idsp.groundmark-poc.example/r/sJQ7EFtRLmur1mHYMmd1Aw",
+  "endpoint_url": "https://idsp.groundmark-poc.example/a/zSACSyRu73820aiZECpTkw",
+  "revocation_endpoint": "https://idsp.groundmark-poc.example/r/zSACSyRu73820aiZECpTkw",
   "signing_key_id": "k1",
-  "signature": "v94NRQjasbF3dyD5uhU_y_lSoszs6V_Ez3qccFvLK8TYP-0tgD7RGKG0DP9sOANYoGHm1VIkM0Z7q2EVc2b5Cg"
+  "signature": "Xb8xox2ZrKDgvqgrB1IE7yhUrj4MSmbDTe66yzTukJW0GzX3NE0GUU5EgFyM35UtpzLRxfZNjet85vbwqDXqCw"
 }

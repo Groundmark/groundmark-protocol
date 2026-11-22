@@ -10,3 +10,4 @@
 keys/*.private*
 *.pem
 *.key
+CLAUDE.md

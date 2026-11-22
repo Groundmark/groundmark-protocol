@@ -7,7 +7,7 @@ import { VerificationError, type VerifyFailureReason } from "../src/errors.ts";
 import { fixtureResolver } from "./helpers.ts";
 
 const AGENT = "agent.groundmark-poc.example";
-const AGENT_PUB = "lJcyOel26ARN1XNzcErIfuXBHkKIMzLrcr1wTDFLAzk";
+const AGENT_PUB = "nYBSoBzNUEcAT0oFKL-5LQgqTmdkQSLpxkAV1y1DGkg";
 
 async function expectReason(p: Promise<unknown>, reason: VerifyFailureReason) {
   await assert.rejects(p, (e: unknown) => {

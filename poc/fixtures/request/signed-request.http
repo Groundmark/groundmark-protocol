@@ -3,6 +3,6 @@ Host: api.supplier.example
 Content-Type: application/json
 Content-Digest: sha-256=:msyFuAhBbE3eHePKgRrRoBirkgt9V0eeo4o7sEtnxNQ=:
 Signature-Input: gm=("@method" "@authority" "@target-uri" "content-digest");created=1747654321;expires=1747654621;keyid="agent.groundmark-poc.example";alg="ed25519"
-Signature: gm=:yZBh2er8oHR1wZW3Pol49eyYZV4+x8krxt/H1KHRuIPRmldXRVmaihwARtOY5DGod7gtIjmPJKNV70vY3hxbBA==:
+Signature: gm=:4yNbu1Sd3IJIZWGAy0BZVh2LJLCKILntR4G4BbwGuNClMpADS5E4vtXqquf8c1aPMKKxRd5yAV/CM5uABQG6Bw==:
 
 {"sku":"X-42","quantity":3}
