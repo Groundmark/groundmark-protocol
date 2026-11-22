@@ -4,6 +4,6 @@ Content-Type: application/json
 Content-Digest: sha-256=:y7E9P8S0gAZvUm6uwJ87IoxHP6kmhAKyHsDpJ4cE8wQ=:
 Groundmark-Claim: claim-type="operator-verified"; ref="https://idsp.groundmark-poc.example/a/vr7Z_bv-gKX0q0cz3wFgug"
 Signature-Input: gm=("@method" "@authority" "@target-uri" "content-digest" "groundmark-claim");created=1747654321;expires=1747654621;keyid="agent.groundmark-poc.example";alg="ed25519"
-Signature: gm=:1GxHEWckksDC1GBTkbSLqsmRCZDWXr+sILGizWiUAC5108xiCIBPy90lnyJuzYcQP8iG8vL/IihptCY5YmeKCA==:
+Signature: gm=:Yu8Y7x1paGWARupHVQmUSqCOCd9sKydfRSAO3HozQRQDML58JHYSP6qjD+mCaksytoQqPkvL6bZ2fJjdkFwyAg==:
 
 {"action":"present-credential"}

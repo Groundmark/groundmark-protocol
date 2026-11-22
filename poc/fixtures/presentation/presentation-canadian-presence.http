@@ -2,8 +2,8 @@ POST /present HTTP/1.1
 Host: api.relying-party.example
 Content-Type: application/json
 Content-Digest: sha-256=:y7E9P8S0gAZvUm6uwJ87IoxHP6kmhAKyHsDpJ4cE8wQ=:
-Groundmark-Claim: claim-type="x-registry-example-canadian-presence"; ref="https://idsp.groundmark-poc.example/a/sJQ7EFtRLmur1mHYMmd1Aw"
+Groundmark-Claim: claim-type="x-registry-example-canadian-presence"; ref="https://idsp.groundmark-poc.example/a/zSACSyRu73820aiZECpTkw"
 Signature-Input: gm=("@method" "@authority" "@target-uri" "content-digest" "groundmark-claim");created=1747654321;expires=1747654621;nonce="f3a9c21e-4b07-4d8a-b1e2-9c3f0a7e5d12";keyid="agent.groundmark-poc.example";alg="ed25519"
-Signature: gm=:vqB++cdhNYPGf4mu7z3srtLQy6C4U4oclk/ztb3X5yMhGowChxNCfo0IlWKDn3/iMb4MxDfzqh7rCODe3MDtAg==:
+Signature: gm=:5KWY+rnPPsCGfmX+4GeozeIXaFQ/IfvAITnCydpD2YS4IPXjBm1AO5ih7l91V0bUn9OU5yn68fWd4SLYssXEBw==:
 
 {"action":"present-credential"}

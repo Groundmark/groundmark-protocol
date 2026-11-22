@@ -10,7 +10,7 @@ import { fixtureResolver, readPoc } from "./helpers.ts";
 const AGENT = "agent.groundmark-poc.example";
 const IDSP = "idsp.groundmark-poc.example";
 const OV_REF = `https://${IDSP}/a/vr7Z_bv-gKX0q0cz3wFgug`;
-const CP_REF = `https://${IDSP}/a/sJQ7EFtRLmur1mHYMmd1Aw`;
+const CP_REF = `https://${IDSP}/a/zSACSyRu73820aiZECpTkw`;
 const NOW = Math.floor(Date.parse("2026-06-10T00:00:00Z") / 1000);
 
 function ctx(over: Partial<AttestationVerifyContext> = {}): AttestationVerifyContext {

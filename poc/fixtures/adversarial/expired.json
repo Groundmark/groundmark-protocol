@@ -24,5 +24,5 @@
   "endpoint_url": "https://idsp.groundmark-poc.example/a/vr7Z_bv-gKX0q0cz3wFgug",
   "revocation_endpoint": "https://idsp.groundmark-poc.example/r/vr7Z_bv-gKX0q0cz3wFgug",
   "signing_key_id": "k1",
-  "signature": "vNNkecTP3HPjQvoeb9i-GD-id2-1nbzc-saN2iSGpyRNlOsHgifI3_o7pCIso19t4aQc61lTn3negKqWI5hsCw"
+  "signature": "3xfeSs4bNvF2oqhGOYFvTEQBXecNeDJSuqXDil51iJKfO4AJkaDCusS27knO7ufksoBpsOJuX9yznBYmoMNuAw"
 }

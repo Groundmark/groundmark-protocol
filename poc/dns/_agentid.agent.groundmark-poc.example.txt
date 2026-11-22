@@ -1,1 +1,1 @@
-_agentid.agent.groundmark-poc.example. 300 IN TXT "v=gm1; k=ed25519; p=lJcyOel26ARN1XNzcErIfuXBHkKIMzLrcr1wTDFLAzk"
+_agentid.agent.groundmark-poc.example. 300 IN TXT "v=gm1; k=ed25519; p=nYBSoBzNUEcAT0oFKL-5LQgqTmdkQSLpxkAV1y1DGkg"
