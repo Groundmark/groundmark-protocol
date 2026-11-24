@@ -30,6 +30,8 @@ export type {
 } from "./dns/resolver.ts";
 export { isSecure } from "./dns/resolver.ts";
 export { MockDnssecResolver } from "./dns/mockResolver.ts";
+export { LoopbackDnssecResolver } from "./dns/loopbackResolver.ts";
+export type { LoopbackDnssecResolverOptions, LookupDetail } from "./dns/loopbackResolver.ts";
 
 // Component 3 — agent key resolution
 export { resolveAgentKey, parseKeyId } from "./agent/keyResolver.ts";
