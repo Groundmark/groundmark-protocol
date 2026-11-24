@@ -34,10 +34,13 @@ import { VerificationError, type VerifyFailureReason } from "./errors.ts";
 /** Replay-protection store for nonces (relying-party state, core §5.4). */
 export interface NonceStore {
   /**
-   * Atomically consume `nonce` if it has not been seen. Returns true only for the
-   * one request that wins. `expiresAt` is a UNIX second expiry derived from the
-   * signed request freshness window; implementations store only a nonce digest in
-   * production.
+   * Atomically consume `nonce`. Returns true only for the one request that wins,
+   * and only for a nonce this relying party issued (core §5.5.2: "The relying
+   * party MUST issue an unpredictable nonce"), within its lifetime, not yet used.
+   * Checking only that a nonce hasn't been seen before accepts nonces the agent
+   * made up; see IssuedNonceStore. `expiresAt` is a UNIX second expiry derived
+   * from the signed request freshness window; implementations store only a nonce
+   * digest in production.
    */
   consumeOnce(nonce: string, expiresAt: number): Promise<boolean>;
 }
@@ -170,7 +173,7 @@ export async function commitRequestNonce(
   }
   const consumed = await nonceStore.consumeOnce(request.nonce, expiresAt);
   if (!consumed) {
-    return { ok: false, reason: "nonce_replayed", message: "nonce has already been observed" };
+    return { ok: false, reason: "nonce_replayed", message: "nonce is not usable: already used, expired, or not issued by this relying party" };
   }
   return undefined;
 }
