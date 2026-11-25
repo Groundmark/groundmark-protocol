@@ -20,6 +20,10 @@ export type {
   NonceStore,
 } from "./verifyRequest.ts";
 
+// Replay protection: a NonceStore that accepts only nonces this relying party issued
+export { IssuedNonceStore, MAX_NONCE_LIFETIME_SECONDS } from "./nonce/issuedNonceStore.ts";
+export type { IssuedNonceStoreOptions, IssuedNonce } from "./nonce/issuedNonceStore.ts";
+
 // Component 2 — the resolver seam (supply a concrete implementation)
 export type {
   DnssecResolver,

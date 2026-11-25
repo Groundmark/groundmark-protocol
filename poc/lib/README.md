@@ -44,6 +44,11 @@ Presentation-profile verification additionally requires a signature-covered
 payload, and commits a nonce with `NonceStore.consumeOnce(nonce, expiresAt)` only after
 the full composite verdict is acceptable.
 
+`IssuedNonceStore` (`src/nonce/issuedNonceStore.ts`) is a `NonceStore` that accepts
+only nonces this relying party issued: `issue()` makes one for the `Accept-Signature`
+challenge (lifetime at most 300 s), and `consumeOnce` accepts it once, unexpired. A
+store that only checks "not seen before" would also accept a nonce the agent made up.
+
 ## Dependencies
 
 - `canonicalize` — RFC 8785 (JCS) canonicalization for attestation signatures.
