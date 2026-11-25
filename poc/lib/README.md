@@ -25,7 +25,7 @@ attestation canonicalization; each dependency is justified in the PR.
 | # | Component | Status | Source |
 |---|-----------|--------|--------|
 | 1 | RFC 9421 parser + signature base | ✅ | `src/rfc9421/{parse,message,signatureBase,contentDigest}.ts` |
-| 2 | DNSSEC-validating resolver | ⏸ **interface + mock**; concrete local-AD client gated on a real demo domain (decision recorded in `docs/dnssec-resolver.md`) | `src/dns/{resolver,mockResolver,agentidRecord}.ts` |
+| 2 | DNSSEC-validating resolver | ✅ interface, mock, and `LoopbackDnssecResolver` (local validating resolver, AD over TCP; `docs/dnssec-resolver.md`) | `src/dns/{resolver,mockResolver,loopbackResolver,agentidRecord}.ts` |
 | 3 | Agent key resolver | ✅ | `src/agent/keyResolver.ts` |
 | 4 | Request-signature verifier | ✅ | `src/verifyRequest.ts` |
 | 5 | Claim resolver | ✅ | `src/claim/{parseAgentClaim,resolveClaims}.ts` |
@@ -58,7 +58,9 @@ runtime dependencies.
 Every DNS read goes through `DnssecResolver`. Only a DNSSEC-validated (`secure`)
 answer is usable; `insecure`/`bogus`/`indeterminate`/`error` are rejected (core
 §7.1). `MockDnssecResolver` backs the offline test suite and exercises the
-unsigned-zone case. A production validating client implements the same interface.
+unsigned-zone case. `LoopbackDnssecResolver` is the production client: it asks a
+validating resolver on loopback (Unbound, Knot Resolver) over TCP and trusts only an
+answer with AD set.
 
 ## Hygiene
 
